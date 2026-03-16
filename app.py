@@ -103,7 +103,6 @@ def update_work_totals(work_id):
 
 def get_work_dict(row):
     if not row: return None
-    # データの長さに応じたマッピング（新規作成時のデフォルト値対応）
     d = list(row) + [0]*21
     return {
         "id": d[0], "user_id": d[1], "title": d[2], "total_pages": d[3],
@@ -150,8 +149,8 @@ if st.session_state.user_id is None:
     st.markdown('<div class="header-bar"><div class="header-title">進捗管理ログイン</div></div>', unsafe_allow_html=True)
     tab1, tab2 = st.tabs(["ログイン", "新規登録"])
     with tab1:
-        u = st.text_input("ユーザー名")
-        p = st.text_input("パスワード", type='password')
+        u = st.text_input("ユーザー名", key="login_user")
+        p = st.text_input("パスワード", type='password', key="login_pass")
         if st.button("ログイン", type="primary", use_container_width=True):
             c.execute('SELECT id, password FROM users WHERE username = ?', (u,))
             data = c.fetchone()
@@ -159,6 +158,17 @@ if st.session_state.user_id is None:
                 st.session_state.user_id, st.session_state.username = data[0], u
                 st.rerun()
             else: st.error("ユーザー名またはパスワードが違います")
+    with tab2:
+        nu = st.text_input("新しいユーザー名", key="reg_user")
+        np = st.text_input("新しいパスワード", type='password', key="reg_pass")
+        if st.button("アカウントを作成する", type="primary", use_container_width=True):
+            if nu and np:
+                try:
+                    c.execute("INSERT INTO users (username, password) VALUES (?,?)", (nu, make_hashes(np)))
+                    conn.commit()
+                    st.success("登録完了！ログインしてください")
+                except: st.error("そのユーザー名は既に使用されています")
+            else: st.error("ユーザー名とパスワードを入力してください")
     st.stop()
 
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
@@ -178,7 +188,7 @@ if st.session_state.page == "list":
     col_t, col_add = st.columns([7, 1.5])
     col_t.subheader(f"自分の原稿")
     with col_add:
-        if st.button("＋", type="primary"): 
+        if st.button("＋", type="primary", key="add_new_work_btn"): 
             st.session_state.edit_id = None
             st.session_state.page = "form"
             st.rerun()
@@ -191,29 +201,29 @@ if st.session_state.page == "list":
         with col_bar:
             st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
         with col_ed:
-            if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): 
+            if st.button("編集", key=f"e_btn_{wd['id']}", use_container_width=True, type="secondary"): 
                 st.session_state.edit_id, st.session_state.page = wd['id'], "form"
                 st.rerun()
         with col_rd:
-            if st.button("閲覧", key=f"v_{wd['id']}", use_container_width=True, type="primary"): 
+            if st.button("閲覧", key=f"v_btn_{wd['id']}", use_container_width=True, type="primary"): 
                 st.session_state.view_id, st.session_state.page = wd['id'], "view"
                 st.rerun()
 
 elif st.session_state.page == "daily":
-    if st.button("◀"): st.session_state.page = "list"; st.rerun()
+    if st.button("◀", key="back_from_daily"): st.session_state.page = "list"; st.rerun()
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     works = c.fetchall()
     if works:
         titles = [w[2] for w in works]; sel_title = st.selectbox("作品名", titles)
         w = next(x for x in works if x[2] == sel_title)
         wd = get_work_dict(w); unit, labels = get_labels_from_type(wd['work_type'], wd['novel_unit'])
-        p = st.number_input(f"{labels[0]} (%)", min_value=0, key="d_p")
-        n = st.number_input(f"{labels[1]} ({unit})", min_value=0, key="d_n")
-        l = st.number_input(f"{labels[2]} ({unit})", min_value=0, key="d_l")
-        t = st.number_input(f"{labels[3]} ({unit})", min_value=0, key="d_t") if wd['work_type'] != "小説" else 0
-        cov = st.number_input(f"表紙 (%)", min_value=0, key="d_cov") if wd['has_cover'] else 0
-        ill = st.number_input(f"挿絵 (枚)", min_value=0, key="d_ill") if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
-        if st.button("保存", type="primary"):
+        p = st.number_input(f"{labels[0]} (%)", min_value=0, key="daily_p")
+        n = st.number_input(f"{labels[1]} ({unit})", min_value=0, key="daily_n")
+        l = st.number_input(f"{labels[2]} ({unit})", min_value=0, key="daily_l")
+        t = st.number_input(f"{labels[3]} ({unit})", min_value=0, key="daily_t") if wd['work_type'] != "小説" else 0
+        cov = st.number_input(f"表紙 (%)", min_value=0, key="daily_cov") if wd['has_cover'] else 0
+        ill = st.number_input(f"挿絵 (枚)", min_value=0, key="daily_ill") if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
+        if st.button("保存", type="primary", key="daily_save"):
             note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cov, ill)
             c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cov, ill))
             conn.commit(); update_work_totals(wd['id']); st.session_state.page = "list"; st.rerun()
@@ -226,27 +236,27 @@ elif st.session_state.page == "form":
     else:
         wd = {"title":"","total_pages":1,"event_name":"","event_date":str(date.today()),"deadline":str(date.today()),"work_type":"漫画","novel_unit":"文字","has_illustrations":0,"total_illustrations":0,"has_cover":0}
 
-    if st.button("◀"): st.session_state.page = "list"; st.rerun()
+    if st.button("◀", key="back_from_form"): st.session_state.page = "list"; st.rerun()
     st.subheader("原稿スケジュールの" + ("編集" if is_e else "追加"))
     
-    w_type = st.radio("ジャンル", ["漫画", "イラスト", "小説"], index=["漫画", "イラスト", "小説"].index(wd['work_type']), horizontal=True)
+    w_type = st.radio("ジャンル", ["漫画", "イラスト", "小説"], index=["漫画", "イラスト", "小説"].index(wd.get('work_type','漫画')), horizontal=True, key="form_type")
     n_unit, h_ill, t_ill, h_cov = wd.get('novel_unit','文字'), wd.get('has_illustrations',0), wd.get('total_illustrations',0), wd.get('has_cover',0)
     
     if w_type == "小説":
-        n_unit = st.radio("管理単位", ["文字", "ページ"], index=0 if n_unit=="文字" else 1, horizontal=True)
-        h_ill = 1 if st.checkbox("挿絵あり", value=bool(h_ill)) else 0
-        if h_ill: t_ill = st.number_input("目標の挿絵枚数", min_value=1, value=max(1, t_ill))
-        h_cov = 1 if st.checkbox("表紙あり", value=bool(h_cov)) else 0
+        n_unit = st.radio("管理単位", ["文字", "ページ"], index=0 if n_unit=="文字" else 1, horizontal=True, key="form_unit")
+        h_ill = 1 if st.checkbox("挿絵あり", value=bool(h_ill), key="form_h_ill") else 0
+        if h_ill: t_ill = st.number_input("目標の挿絵枚数", min_value=1, value=max(1, t_ill), key="form_t_ill")
+        h_cov = 1 if st.checkbox("表紙あり", value=bool(h_cov), key="form_h_cov_novel") else 0
     elif w_type == "漫画": 
-        h_cov = 1 if st.checkbox("表紙あり", value=bool(h_cov)) else 0
+        h_cov = 1 if st.checkbox("表紙あり", value=bool(h_cov), key="form_h_cov_manga") else 0
     
-    t = st.text_input("作品名", value=wd['title'])
-    pg = st.number_input(f"目標の数 ({'P' if w_type!='小説' else n_unit})", min_value=1, value=wd['total_pages'])
-    ev = st.text_input("イベント名", value=wd['event_name'])
-    ed = st.date_input("イベント日", value=date.fromisoformat(wd['event_date']))
-    dd = st.date_input("締切日", value=date.fromisoformat(wd['deadline']))
+    t = st.text_input("作品名", value=wd.get('title',''), key="form_title")
+    pg = st.number_input(f"目標の数 ({'P' if w_type!='小説' else n_unit})", min_value=1, value=wd.get('total_pages',1), key="form_target")
+    ev = st.text_input("イベント名", value=wd.get('event_name',''), key="form_event")
+    ed = st.date_input("イベント日", value=date.fromisoformat(wd.get('event_date', str(date.today()))), key="form_edate")
+    dd = st.date_input("締切日", value=date.fromisoformat(wd.get('deadline', str(date.today()))), key="form_deadline")
     
-    if st.button("保存", type="primary", use_container_width=True):
+    if st.button("保存", type="primary", use_container_width=True, key="form_save_btn"):
         if is_e:
             c.execute("UPDATE works SET title=?, total_pages=?, event_name=?, event_date=?, deadline=?, work_type=?, has_illustrations=?, total_illustrations=?, has_cover=?, novel_unit=? WHERE id=?", (t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit, wd['id']))
         else:
@@ -254,7 +264,7 @@ elif st.session_state.page == "form":
         conn.commit(); st.session_state.page = "list"; st.rerun()
 
 elif st.session_state.page == "log_all":
-    if st.button("◀"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
+    if st.button("◀", key="back_from_logall"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
     c.execute("""
         SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
                pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
@@ -271,35 +281,35 @@ elif st.session_state.page == "log_all":
             with st.container():
                 st.markdown(f'<div style="color:#B282E6; font-size:1.2rem; font-weight:bold;">ログ編集: {wtitle} ({ldate})</div>', unsafe_allow_html=True)
                 unit, labels = get_labels_from_type(wtype, lunit)
-                ep = st.number_input(f"{labels[0]} (%)", value=lp, key=f"p_e_{lid}")
-                en = st.number_input(f"{labels[1]} ({unit})", value=ln, key=f"n_e_{lid}")
-                el = st.number_input(f"{labels[2]} ({unit})", value=ll, key=f"l_e_{lid}")
-                et = st.number_input(f"{labels[3]} ({unit})", value=lt, key=f"t_e_{lid}") if wtype != "小説" else 0
-                ec = st.number_input("表紙 (%)", value=lcov, key=f"c_e_{lid}") if h_cov else 0
-                ei = st.number_input("挿絵 (枚)", value=lill, key=f"i_e_{lid}") if (wtype == "小説" and h_ill) else 0
+                ep = st.number_input(f"{labels[0]} (%)", value=lp, key=f"edit_p_{lid}")
+                en = st.number_input(f"{labels[1]} ({unit})", value=ln, key=f"edit_n_{lid}")
+                el = st.number_input(f"{labels[2]} ({unit})", value=ll, key=f"edit_l_{lid}")
+                et = st.number_input(f"{labels[3]} ({unit})", value=lt, key=f"edit_t_{lid}") if wtype != "小説" else 0
+                ec = st.number_input("表紙 (%)", value=lcov, key=f"edit_cov_{lid}") if h_cov else 0
+                ei = st.number_input("挿絵 (枚)", value=lill, key=f"edit_ill_{lid}") if (wtype == "小説" and h_ill) else 0
                 
                 c_s1, c_s2 = st.columns(2)
                 with c_s1:
-                    if st.button("更新保存", key=f"save_{lid}", type="primary"):
+                    if st.button("更新保存", key=f"log_save_{lid}", type="primary"):
                         nn = format_log_note(ep, en, el, et, wtype, unit, labels, ec, ei)
                         c.execute("UPDATE progress_logs SET note=?, p_diff=?, n_diff=?, l_diff=?, t_diff=?, cov_diff=?, ill_diff=? WHERE id=?", (nn, ep, en, el, et, ec, ei, lid))
                         conn.commit(); update_work_totals(wid); st.session_state.log_edit_id = None; st.rerun()
                 with c_s2:
-                    if st.button("取消", key=f"cancel_{lid}"): st.session_state.log_edit_id = None; st.rerun()
+                    if st.button("取消", key=f"log_cancel_{lid}"): st.session_state.log_edit_id = None; st.rerun()
         else:
             col_txt, col_btn = st.columns([7.5, 2.5])
             with col_txt: st.markdown(f'<div class="log-card"><small>{ldate} - {uname}<br>{wtitle}</small><br><b>{lnote}</b></div>', unsafe_allow_html=True)
             with col_btn:
                 if is_mine:
                     c1, c2 = st.columns(2)
-                    if c1.button("編集", key=f"eb_{lid}"): st.session_state.log_edit_id = lid; st.rerun()
-                    if c2.button("削除", key=f"db_{lid}"):
+                    if c1.button("編集", key=f"log_ebtn_{lid}"): st.session_state.log_edit_id = lid; st.rerun()
+                    if c2.button("削除", key=f"log_dbtn_{lid}"):
                         c.execute("DELETE FROM progress_logs WHERE id=?", (lid,)); conn.commit(); update_work_totals(wid); st.rerun()
 
 elif st.session_state.page == "view":
     c.execute("SELECT works.*, users.username FROM works JOIN users ON works.user_id = users.id WHERE works.id=?", (st.session_state.view_id,))
     row = c.fetchone(); wd = get_work_dict(row); uname = row[21] if row else "不明"
-    if st.button("◀"): st.session_state.page = "list"; st.rerun()
+    if st.button("◀", key="back_from_view"): st.session_state.page = "list"; st.rerun()
     st.subheader(f"{uname}さんの：{wd['title']}")
     p = calculate_total_percent(row); st.progress(p/100)
     unit, labels = get_labels_from_type(wd['work_type'], wd['novel_unit'])
@@ -311,9 +321,9 @@ elif st.session_state.page == "view":
     if wd['has_illustrations']: st.write(f"**挿絵**: {wd['draft_pages']} / {wd['total_illustrations']} 枚")
 
 elif st.session_state.page == "add_friend":
-    if st.button("◀"): st.session_state.page = "list"; st.rerun()
-    fn, fp = st.text_input("友達のユーザー名"), st.text_input("友達のパスワード", type="password")
-    if st.button("追加", type="primary"):
+    if st.button("◀", key="back_from_friend"): st.session_state.page = "list"; st.rerun()
+    fn, fp = st.text_input("友達のユーザー名", key="f_user"), st.text_input("友達のパスワード", type="password", key="f_pass")
+    if st.button("追加", type="primary", key="f_add_btn"):
         c.execute("SELECT id, password FROM users WHERE username=?", (fn,))
         res = c.fetchone()
         if res and check_hashes(fp, res[1]):
