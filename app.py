@@ -173,7 +173,8 @@ if st.session_state.page == "list":
         wd = get_work_dict(work); percent = calculate_total_percent(work)
         st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-        col_bar, col_ed, col_rd = st.columns([4, 1.5, 1.5])
+        
+        col_bar, col_ed, col_del, col_rd = st.columns([3.5, 1.5, 1.5, 1.5])
         with col_bar:
             if percent < 100.0:
                 st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
@@ -181,8 +182,21 @@ if st.session_state.page == "list":
                 st.markdown(f'<div style="color:#C199E5; font-weight:bold; font-size:14px; padding-top:5px;">★ 完了済み (100%)</div>', unsafe_allow_html=True)
         with col_ed:
             if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.edit_id, st.session_state.page = wd['id'], "form"; st.rerun()
+        with col_del:
+            if st.button("削除", key=f"d_{wd['id']}", use_container_width=True, type="secondary"):
+                st.session_state.confirm_del = wd['id']
         with col_rd:
             if st.button("閲覧", key=f"v_{wd['id']}", use_container_width=True, type="primary"): st.session_state.view_id, st.session_state.page = wd['id'], "view"; st.rerun()
+        
+        # 削除確認
+        if st.session_state.get("confirm_del") == wd['id']:
+            if st.checkbox(f"「{wd['title']}」を本当に削除しますか？", key=f"cb_{wd['id']}"):
+                if st.button("実行", key=f"ex_{wd['id']}", type="primary"):
+                    c.execute("DELETE FROM progress_logs WHERE work_id=?", (wd['id'],))
+                    c.execute("DELETE FROM works WHERE id=?", (wd['id'],))
+                    conn.commit()
+                    st.session_state.confirm_del = None
+                    st.rerun()
 
     # 2. 友達の原稿セクション
     c.execute("""
