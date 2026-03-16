@@ -14,22 +14,9 @@ def initialize_db():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     c = conn.cursor()
     
-    # ユーザーテーブル (show_friends_progress カラムを追加)
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        username TEXT UNIQUE, 
-        password TEXT,
-        show_friends_progress INTEGER DEFAULT 1
-    )
-    """)
+    # ユーザーテーブル
+    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
     
-    # 既存DBへのカラム追加（ユーザー設定用）
-    try:
-        c.execute("SELECT show_friends_progress FROM users LIMIT 1")
-    except:
-        c.execute("ALTER TABLE users ADD COLUMN show_friends_progress INTEGER DEFAULT 1")
-
     # 作品テーブル
     c.execute("""
     CREATE TABLE IF NOT EXISTS works (
@@ -62,14 +49,23 @@ def initialize_db():
     )
     """)
     
-    # 既存DBへのカラム追加（エラー回避用）
+    # 友達テーブル (is_visible カラムを追加)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS friends (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        friend_id INTEGER, 
+        is_visible INTEGER DEFAULT 1,
+        UNIQUE(user_id, friend_id)
+    )
+    """)
+    
+    # 既存DBへのカラム追加（友達の表示ON/OFF用）
     try:
-        c.execute("SELECT cov_diff FROM progress_logs LIMIT 1")
+        c.execute("SELECT is_visible FROM friends LIMIT 1")
     except:
-        c.execute("ALTER TABLE progress_logs ADD COLUMN cov_diff INTEGER DEFAULT 0")
-        c.execute("ALTER TABLE progress_logs ADD COLUMN ill_diff INTEGER DEFAULT 0")
+        c.execute("ALTER TABLE friends ADD COLUMN is_visible INTEGER DEFAULT 1")
 
-    c.execute("CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, friend_id INTEGER, UNIQUE(user_id, friend_id))")
     conn.commit()
     return conn
 
@@ -103,6 +99,7 @@ st.markdown("""
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
     .owner-tag { color: #888; font-size: 0.8rem; margin-bottom: 4px; font-weight: bold; }
     .complete-badge { background-color: #4CAF50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+    .friend-box { background-color: #F9F3FF; padding: 10px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #E1BEE7; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -187,23 +184,6 @@ if st.session_state.user_id is None:
             else: st.error("ユーザー名とパスワードを入力してください")
     st.stop()
 
-# --- ユーザー設定 (サイドバー) ---
-c.execute("SELECT show_friends_progress FROM users WHERE id=?", (st.session_state.user_id,))
-show_friends_config = c.fetchone()[0]
-
-with st.sidebar:
-    st.title("設定")
-    new_show_friends = st.checkbox("友達の進捗を表示する", value=bool(show_friends_config))
-    if new_show_friends != bool(show_friends_config):
-        c.execute("UPDATE users SET show_friends_progress=? WHERE id=?", (int(new_show_friends), st.session_state.user_id))
-        conn.commit()
-        st.rerun()
-    
-    if st.button("ログアウト"):
-        st.session_state.user_id = None
-        st.session_state.username = None
-        st.rerun()
-
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
 
 # --- メイン画面 ---
@@ -212,7 +192,14 @@ if st.session_state.page == "list":
     st.button("今日の進捗", use_container_width=True, type="primary", on_click=lambda: setattr(st.session_state, 'page', 'daily'))
     col_sub1, col_sub2 = st.columns(2)
     with col_sub1: st.button("全履歴(LOG)", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'log_all'))
-    with col_sub2: st.button("友達を追加", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
+    with col_sub2: st.button("友達を管理", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
+    
+    # ログアウトボタン (サイドバーを使わない場合の配置)
+    if st.button("ログアウト", type="secondary"):
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.rerun()
+
     st.divider()
 
     # 自分の原稿
@@ -248,34 +235,33 @@ if st.session_state.page == "list":
 
     st.divider()
     
-    # 友達の原稿 (ON/OFF機能)
-    if show_friends_config:
-        st.subheader(f"友達の原稿")
-        c.execute("""
-            SELECT w.*, u.username FROM works w 
-            JOIN users u ON w.user_id = u.id 
-            WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
-        """, (st.session_state.user_id,))
-        friend_works = c.fetchall()
-        
-        if friend_works:
-            for f_work in friend_works:
-                wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
-                st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
-                st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-                col_bar, col_rd = st.columns([7, 1.5])
-                with col_bar:
-                    if percent >= 100:
-                        st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
-                with col_rd:
-                    if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
-                        st.session_state.view_id, st.session_state.page = wd['id'], "view"
-                        st.rerun()
-        else:
-            st.info("表示できる友達の原稿はありません。")
+    # 友達の原稿 (個別の表示設定を考慮)
+    st.subheader(f"友達の原稿")
+    c.execute("""
+        SELECT w.*, u.username FROM works w 
+        JOIN users u ON w.user_id = u.id 
+        WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ? AND is_visible = 1)
+    """, (st.session_state.user_id,))
+    friend_works = c.fetchall()
+    
+    if friend_works:
+        for f_work in friend_works:
+            wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
+            st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
+            col_bar, col_rd = st.columns([7, 1.5])
+            with col_bar:
+                if percent >= 100:
+                    st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+            with col_rd:
+                if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
+                    st.session_state.view_id, st.session_state.page = wd['id'], "view"
+                    st.rerun()
+    else:
+        st.info("表示可能な友達の原稿はありません（設定でOFFになっているか、友達がいません）。")
 
 elif st.session_state.page == "daily":
     if st.button("◀", key="back_from_daily"): st.session_state.page = "list"; st.rerun()
@@ -292,7 +278,7 @@ elif st.session_state.page == "daily":
         cov = st.number_input(f"表紙 (%)", min_value=0, key="daily_cov") if wd['has_cover'] else 0
         ill = st.number_input(f"挿絵 (枚)", min_value=0, key="daily_ill") if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
         if st.button("保存", type="primary", key="daily_save"):
-            note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cov, ill)
+            note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cover=cov, ill=ill)
             c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cov, ill))
             conn.commit(); update_work_totals(wd['id']); st.session_state.page = "list"; st.rerun()
 
@@ -341,28 +327,14 @@ elif st.session_state.page == "form":
 
 elif st.session_state.page == "log_all":
     if st.button("◀", key="back_from_logall"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
-    
-    # ON/OFF設定に基づいたクエリ
-    if show_friends_config:
-        query = """
-            SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
-                   pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
-                   w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
-            FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
-            WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?) ORDER BY pl.id DESC
-        """
-        params = (st.session_state.user_id, st.session_state.user_id)
-    else:
-        query = """
-            SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
-                   pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
-                   w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
-            FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
-            WHERE w.user_id = ? ORDER BY pl.id DESC
-        """
-        params = (st.session_state.user_id,)
-
-    c.execute(query, params)
+    c.execute("""
+        SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
+               pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
+               w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
+        FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
+        WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ? AND is_visible = 1) 
+        ORDER BY pl.id DESC
+    """, (st.session_state.user_id, st.session_state.user_id))
     
     for log in c.fetchall():
         lid, ldate, lnote, wtitle, uname, uid, lp, ln, ll, lt, lcov, lill, wid, wtype, lunit, h_cov, h_ill = log
@@ -419,14 +391,56 @@ elif st.session_state.page == "view":
     if wd['has_illustrations']: st.write(f"**挿絵**: {wd['draft_pages']} / {wd['total_illustrations']} 枚")
 
 elif st.session_state.page == "add_friend":
-    if st.button("◀", key="back_from_friend"): st.session_state.page = "list"; st.rerun()
-    fn, fp = st.text_input("友達のユーザー名", key="f_user"), st.text_input("友達のパスワード", type="password", key="f_pass")
-    if st.button("追加", type="primary", key="f_add_btn"):
-        c.execute("SELECT id, password FROM users WHERE username=?", (fn,))
-        res = c.fetchone()
-        if res and check_hashes(fp, res[1]):
-            try: 
-                c.execute("INSERT INTO friends (user_id, friend_id) VALUES (?,?)", (st.session_state.user_id, res[0]))
-                conn.commit(); st.success("追加しました！")
-            except: st.error("既に追加されています")
-        else: st.error("ユーザー名またはパスワードが違います")
+    if st.button("◀ メインに戻る", key="back_from_friend"): st.session_state.page = "list"; st.rerun()
+    
+    st.subheader("友達を新しく追加")
+    with st.container():
+        fn, fp = st.text_input("友達のユーザー名", key="f_user"), st.text_input("友達のパスワード", type="password", key="f_pass")
+        if st.button("追加する", type="primary", key="f_add_btn"):
+            c.execute("SELECT id, password FROM users WHERE username=?", (fn,))
+            res = c.fetchone()
+            if res and check_hashes(fp, res[1]):
+                if res[0] == st.session_state.user_id:
+                    st.error("自分自身を追加することはできません。")
+                else:
+                    try: 
+                        c.execute("INSERT INTO friends (user_id, friend_id, is_visible) VALUES (?,?,1)", (st.session_state.user_id, res[0]))
+                        conn.commit(); st.success(f"{fn}さんを追加しました！"); st.rerun()
+                    except: st.error("その友達は既に追加されています。")
+            else: st.error("ユーザー名またはパスワードが違います。")
+
+    st.divider()
+    st.subheader("登録済みの友達")
+    
+    c.execute("""
+        SELECT f.id, u.username, f.is_visible 
+        FROM friends f JOIN users u ON f.friend_id = u.id 
+        WHERE f.user_id = ?
+    """, (st.session_state.user_id,))
+    friends_list = c.fetchall()
+    
+    if not friends_list:
+        st.info("まだ友達が登録されていません。")
+    else:
+        for fid, fname, fvis in friends_list:
+            with st.container():
+                st.markdown(f'<div class="friend-box">', unsafe_allow_html=True)
+                col_n, col_v, col_d = st.columns([4, 3, 2])
+                with col_n:
+                    st.write(f"👤 **{fname}**")
+                with col_v:
+                    # 個別の表示・非表示切り替え
+                    v_label = "表示中" if fvis else "非表示"
+                    if st.toggle(v_label, value=bool(fvis), key=f"tog_{fid}"):
+                        if not fvis:
+                            c.execute("UPDATE friends SET is_visible=1 WHERE id=?", (fid,))
+                            conn.commit(); st.rerun()
+                    else:
+                        if fvis:
+                            c.execute("UPDATE friends SET is_visible=0 WHERE id=?", (fid,))
+                            conn.commit(); st.rerun()
+                with col_d:
+                    if st.button("削除", key=f"del_f_{fid}", type="secondary"):
+                        c.execute("DELETE FROM friends WHERE id=?", (fid,))
+                        conn.commit(); st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
