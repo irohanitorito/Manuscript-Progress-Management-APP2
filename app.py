@@ -14,14 +14,13 @@ def initialize_db():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     c = conn.cursor()
     
-    # スキーマチェック（カラム数が不足している場合は自動で再構築）
+    # スキーマチェック
     try:
         c.execute("SELECT * FROM works LIMIT 1")
         col_count = len(c.description)
         if col_count < 21:
             raise sqlite3.OperationalError("Old schema")
     except:
-        # テーブルが古い、または存在しない場合は一度削除して作り直す
         c.execute("DROP TABLE IF EXISTS progress_logs")
         c.execute("DROP TABLE IF EXISTS works")
         c.execute("DROP TABLE IF EXISTS friends")
@@ -84,9 +83,8 @@ st.markdown("""
     .progress-container { width: 100%; background-color: #F0F0F0; border-radius: 10px; margin: 5px 0; height: 12px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background-color: #C199E5; transition: width 0.3s ease; }
     div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background-color: #F3E5F5 !important; border-radius: 12px !important; border: none !important; color: #B282E6 !important; }
-    .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 10px; background: #fafafa; border-radius: 0 8px 8px 0; }
+    .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 5px; background: #fafafa; border-radius: 0 8px 8px 0; width: 100%; }
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
-    .friend-header { color: #888; font-size: 1.2rem; font-weight: bold; margin: 30px 0 10px 0; border-bottom: 1px solid #EEE; padding-bottom: 5px; }
     .owner-tag { color: #888; font-size: 0.75rem; margin-bottom: 2px; }
 </style>
 """, unsafe_allow_html=True)
@@ -141,7 +139,6 @@ def format_log_note(p, n, l, t, w_type, unit, cover=0, ill=0):
 # --- 認証機能 ---
 if st.session_state.user_id is None:
     st.markdown('<div class="header-bar"><div class="header-title">進捗管理ログイン</div></div>', unsafe_allow_html=True)
-    
     tab1, tab2 = st.tabs(["ログイン", "新規登録"])
     with tab1:
         u = st.text_input("ユーザー名")
@@ -197,7 +194,7 @@ if st.session_state.page == "list":
     c.execute("SELECT works.*, users.username FROM works JOIN users ON works.user_id = users.id WHERE works.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)", (st.session_state.user_id,))
     friend_works = c.fetchall()
     if friend_works:
-        st.markdown('<div class="friend-header">友達の原稿</div>', unsafe_allow_html=True)
+        st.markdown('<div style="color: #888; font-size: 1.2rem; font-weight: bold; margin-top: 30px;">友達の原稿</div>', unsafe_allow_html=True)
         for work in friend_works:
             wd = get_work_dict(work); percent = calculate_total_percent(work); owner = work[21]
             st.markdown(f'<div class="owner-tag">👤 {owner}</div>', unsafe_allow_html=True)
@@ -268,8 +265,27 @@ elif st.session_state.page == "view":
 
 elif st.session_state.page == "log_all":
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
-    c.execute("SELECT pl.update_date, pl.note, w.title, u.username FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?) ORDER BY pl.id DESC", (st.session_state.user_id, st.session_state.user_id))
-    for log in c.fetchall(): st.markdown(f'<div class="log-card"><small>{log[0]} - {log[3]}<br>{log[2]}</small><br><b>{log[1]}</b></div>', unsafe_allow_html=True)
+    c.execute("""
+        SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id 
+        FROM progress_logs pl 
+        JOIN works w ON pl.work_id = w.id 
+        JOIN users u ON w.user_id = u.id 
+        WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?) 
+        ORDER BY pl.id DESC
+    """, (st.session_state.user_id, st.session_state.user_id))
+    
+    logs = c.fetchall()
+    for log in logs:
+        log_id, log_date, log_note, work_title, owner_name, owner_id = log
+        col_txt, col_del = st.columns([8, 2])
+        with col_txt:
+            st.markdown(f'<div class="log-card"><small>{log_date} - {owner_name}<br>{work_title}</small><br><b>{log_note}</b></div>', unsafe_allow_html=True)
+        with col_del:
+            # 自分のログのみ削除ボタンを表示
+            if owner_id == st.session_state.user_id:
+                if st.button("削除", key=f"del_log_{log_id}"):
+                    c.execute("DELETE FROM progress_logs WHERE id=?", (log_id,))
+                    conn.commit(); st.rerun()
 
 elif st.session_state.page == "add_friend":
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
