@@ -30,11 +30,11 @@ CREATE TABLE IF NOT EXISTS works (
 )
 """)
 
-# カラム不足によるエラーを防ぐための追加対応
+# カラム追加対応
 try:
     c.execute("ALTER TABLE works ADD COLUMN novel_unit TEXT DEFAULT '文字'")
-except: pass
-try:
+    c.execute("ALTER TABLE works ADD COLUMN has_illustrations INTEGER DEFAULT 0")
+    c.execute("ALTER TABLE works ADD COLUMN total_illustrations INTEGER DEFAULT 0")
     c.execute("ALTER TABLE works ADD COLUMN has_cover INTEGER DEFAULT 0")
     c.execute("ALTER TABLE works ADD COLUMN cover_percent INTEGER DEFAULT 0")
 except: pass
@@ -58,7 +58,7 @@ if "page" not in st.session_state: st.session_state.page = "list"
 if "edit_id" not in st.session_state: st.session_state.edit_id = None
 if "view_id" not in st.session_state: st.session_state.view_id = None
 
-# 3. カスタムCSS（ボタンのサイズとレイアウトを維持）
+# 3. カスタムCSS
 st.markdown("""
 <style>
     .stApp { background-color: white; color: #B282E6; }
@@ -69,30 +69,16 @@ st.markdown("""
     
     div.stButton > button { border-radius: 12px !important; font-weight: bold !important; width: 100%; }
     
-    /* 編集・閲覧ボタンのサイズ統一 */
     div.stButton > button[kind="primary"] { 
-        background-color: #C199E5 !important; 
-        color: white !important; 
-        border: none !important; 
-        height: 2.2rem !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        background-color: #C199E5 !important; color: white !important; border: none !important; height: 2.2rem !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
     }
     div.stButton > button[kind="secondary"] { 
-        border: 2px solid #C199E5 !important; 
-        color: #C199E5 !important; 
-        background-color: white !important; 
-        height: 2.2rem !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        border: 2px solid #C199E5 !important; color: #C199E5 !important; background-color: white !important; height: 2.2rem !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
     }
 
-    [data-testid="column"] div.stButton > button { 
-        font-size: 0.8rem !important; 
-        padding: 0 !important;
-    }
+    [data-testid="column"] div.stButton > button { font-size: 0.8rem !important; padding: 0 !important; }
 
     .progress-container { width: 100%; background-color: #F0F0F0; border-radius: 10px; margin: 5px 0; height: 12px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background-color: #C199E5; transition: width 0.3s ease; }
@@ -105,21 +91,23 @@ st.markdown("""
 def make_hashes(p): return hashlib.sha256(str.encode(p)).hexdigest()
 def check_hashes(p, h): return make_hashes(p) == h
 
-# 辞書形式でデータを扱うためのヘルパー
 def get_work_dict(row):
     if not row: return None
     return {
         "id": row[0], "user_id": row[1], "title": row[2], "total_pages": row[3],
         "event_name": row[4], "event_date": row[5], "deadline": row[6], "work_type": row[7],
         "plot_percent": row[8], "name_pages": row[9], "draft_pages": row[10],
-        "line_pages": row[11], "tone_pages": row[12], "has_cover": row[18],
-        "cover_percent": row[19], "novel_unit": row[20]
+        "line_pages": row[11], "tone_pages": row[12], 
+        "has_illustrations": row[16], "total_illustrations": row[17],
+        "has_cover": row[18], "cover_percent": row[19], "novel_unit": row[20]
     }
 
 def calculate_total_percent(w):
     wd = get_work_dict(w)
     total = wd["total_pages"] if wd["total_pages"] > 0 else 1
+    # 基本の4工程の進捗率
     scores = [wd["plot_percent"], (wd["name_pages"]/total*100), (wd["line_pages"]/total*100), (wd["tone_pages"]/total*100)]
+    # 表紙がある場合は表紙進捗も加算
     if wd["work_type"] != "イラスト" and wd["has_cover"]: scores.append(wd["cover_percent"])
     avg = sum(scores) / len(scores)
     return round(max(0.0, min(float(avg), 100.0)), 1)
@@ -135,13 +123,14 @@ def get_labels(w):
     else: # 漫画
         return "P", ["プロット", "ネーム", "線画", "トーン/仕上げ"]
 
-def format_log_note(p, n, l, t, w_type, unit, cover=0):
+def format_log_note(p, n, l, t, w_type, unit, cover=0, ill=0):
     parts = []
     if p: parts.append(f"工程1 +{p}%")
     if n: parts.append(f"工程2 +{n}{unit}")
     if l: parts.append(f"工程3 +{l}{unit}")
     if t: parts.append(f"工程4 +{t}{unit}")
     if cover: parts.append(f"表紙 +{cover}%")
+    if ill: parts.append(f"挿絵 +{ill}枚")
     return " / ".join(parts) if parts else "更新なし"
 
 # --- 認証機能 ---
@@ -215,10 +204,12 @@ elif st.session_state.page == "daily":
         l = st.number_input(f"{labels[2]} (現在: {wd['line_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['line_pages'])
         t = st.number_input(f"{labels[3]} (現在: {wd['tone_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['tone_pages'])
         cov = st.number_input(f"表紙進捗 (現在: {wd['cover_percent']}%)", min_value=0, max_value=100-wd['cover_percent']) if (wd['work_type'] != "イラスト" and wd['has_cover']) else 0
+        ill = st.number_input(f"挿絵完了枚数 (現在: {wd['draft_pages']}/{wd['total_illustrations']}枚)", min_value=0, max_value=wd['total_illustrations']-wd['draft_pages']) if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
         
         if st.button("保存", type="primary", use_container_width=True):
-            c.execute("UPDATE works SET plot_percent=plot_percent+?, name_pages=name_pages+?, line_pages=line_pages+?, tone_pages=tone_pages+?, cover_percent=cover_percent+? WHERE id=?", (p, n, l, t, cov, wd['id']))
-            note = format_log_note(p, n, l, t, wd['work_type'], unit, cov)
+            # draft_pages を挿絵完了枚数として一時利用
+            c.execute("UPDATE works SET plot_percent=plot_percent+?, name_pages=name_pages+?, line_pages=line_pages+?, tone_pages=tone_pages+?, cover_percent=cover_percent+?, draft_pages=draft_pages+? WHERE id=?", (p, n, l, t, cov, ill, wd['id']))
+            note = format_log_note(p, n, l, t, wd['work_type'], unit, cov, ill)
             c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff) VALUES (?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t))
             conn.commit(); st.session_state.page = "list"; st.rerun()
     else:
@@ -232,10 +223,16 @@ elif st.session_state.page == "form":
     
     w_type = st.radio("ジャンル", ["漫画", "イラスト", "小説"], index=["漫画", "イラスト", "小説"].index(wd['work_type']), horizontal=True)
     
-    n_unit, h_ill, h_cov = wd['novel_unit'], 0, wd['has_cover']
+    n_unit = wd['novel_unit']
+    h_ill = wd['has_illustrations']
+    t_ill = wd['total_illustrations']
+    h_cov = wd['has_cover']
+
     if w_type == "小説":
         n_unit = st.radio("管理単位", ["文字", "ページ"], index=0 if wd['novel_unit']=="文字" else 1, horizontal=True)
-        h_ill = 1 if st.checkbox("挿絵あり", value=bool(row[16])) else 0
+        h_ill = 1 if st.checkbox("挿絵あり", value=bool(wd['has_illustrations'])) else 0
+        if h_ill:
+            t_ill = st.number_input("目標の挿絵枚数", min_value=1, value=max(1, wd['total_illustrations']))
         h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
     elif w_type == "漫画":
         h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
@@ -246,9 +243,9 @@ elif st.session_state.page == "form":
     
     if st.button("保存", type="primary", use_container_width=True):
         if is_e:
-            c.execute("UPDATE works SET title=?, total_pages=?, event_name=?, event_date=?, deadline=?, work_type=?, has_illustrations=?, has_cover=?, novel_unit=? WHERE id=?", (t, pg, ev, str(ed), str(dd), w_type, h_ill, h_cov, n_unit, wd['id']))
+            c.execute("UPDATE works SET title=?, total_pages=?, event_name=?, event_date=?, deadline=?, work_type=?, has_illustrations=?, total_illustrations=?, has_cover=?, novel_unit=? WHERE id=?", (t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit, wd['id']))
         else:
-            c.execute("INSERT INTO works (user_id, title, total_pages, event_name, event_date, deadline, work_type, has_illustrations, has_cover, novel_unit) VALUES (?,?,?,?,?,?,?,?,?,?)", (st.session_state.user_id, t, pg, ev, str(ed), str(dd), w_type, h_ill, h_cov, n_unit))
+            c.execute("INSERT INTO works (user_id, title, total_pages, event_name, event_date, deadline, work_type, has_illustrations, total_illustrations, has_cover, novel_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (st.session_state.user_id, t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit))
         conn.commit(); st.session_state.page = "list"; st.rerun()
 
 elif st.session_state.page == "view":
@@ -260,10 +257,15 @@ elif st.session_state.page == "view":
     st.subheader(f"{uname}さんの：{wd['title']}")
     p = calculate_total_percent(row); st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{p}%;"></div></div><div style="text-align:right;">{p}%</div>', unsafe_allow_html=True)
     unit, labels = get_labels(row)
-    for i, val in enumerate([wd['plot_percent'], wd['name_pages'], wd['draft_pages'], wd['line_pages']]):
-        if i < len(labels):
-            st.write(f"**{labels[i]}**: {val} / {100 if i==0 else wd['total_pages']} {'%' if i==0 else unit}")
-    if wd['work_type'] != "イラスト" and wd['has_cover']: st.write(f"**表紙**: {wd['cover_percent']} / 100 %")
+    # 各工程の表示
+    steps = [wd['plot_percent'], wd['name_pages'], wd['line_pages'], wd['tone_pages']]
+    for i, val in enumerate(steps):
+        st.write(f"**{labels[i]}**: {val} / {100 if i==0 else wd['total_pages']} {'%' if i==0 else unit}")
+    
+    if wd['work_type'] != "イラスト" and wd['has_cover']:
+        st.write(f"**表紙**: {wd['cover_percent']} / 100 %")
+    if wd['work_type'] == "小説" and wd['has_illustrations']:
+        st.write(f"**挿絵**: {wd['draft_pages']} / {wd['total_illustrations']} 枚")
 
 elif st.session_state.page == "log_all":
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
