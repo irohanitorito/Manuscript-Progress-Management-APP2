@@ -100,6 +100,7 @@ st.markdown("""
     .owner-tag { color: #888; font-size: 0.8rem; margin-bottom: 4px; font-weight: bold; }
     .complete-badge { background-color: #4CAF50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
     .friend-box { background-color: #F9F3FF; padding: 10px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #E1BEE7; }
+    .work-count-badge { font-size: 0.9rem; color: #C199E5; margin-left: 8px; font-weight: normal; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -194,7 +195,6 @@ if st.session_state.page == "list":
     with col_sub1: st.button("全履歴(LOG)", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'log_all'))
     with col_sub2: st.button("友達を管理", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
     
-    # ログアウトボタン (サイドバーを使わない場合の配置)
     if st.button("ログアウト", type="secondary"):
         st.session_state.user_id = None
         st.session_state.username = None
@@ -202,12 +202,21 @@ if st.session_state.page == "list":
 
     st.divider()
 
-    # 自分の原稿
+    # 自分の原稿データの取得と計算
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     my_works = c.fetchall()
     
+    # 完了数のカウント
+    total_my_works = len(my_works)
+    completed_my_works = 0
+    for work in my_works:
+        if calculate_total_percent(work) >= 100.0:
+            completed_my_works += 1
+
+    # 見出し部分の修正
     col_t, col_add = st.columns([7, 1.5])
-    col_t.subheader(f"自分の原稿")
+    with col_t:
+        st.markdown(f'### 自分の原稿 <span class="work-count-badge">({completed_my_works}/{total_my_works})</span>', unsafe_allow_html=True)
     with col_add:
         if st.button("＋", type="primary", key="add_new_work_btn"): 
             st.session_state.edit_id = None
@@ -235,7 +244,7 @@ if st.session_state.page == "list":
 
     st.divider()
     
-    # 友達の原稿 (個別の表示設定を考慮)
+    # 友達の原稿
     st.subheader(f"友達の原稿")
     c.execute("""
         SELECT w.*, u.username FROM works w 
@@ -261,7 +270,7 @@ if st.session_state.page == "list":
                     st.session_state.view_id, st.session_state.page = wd['id'], "view"
                     st.rerun()
     else:
-        st.info("表示可能な友達の原稿はありません（設定でOFFになっているか、友達がいません）。")
+        st.info("表示可能な友達の原稿はありません。")
 
 elif st.session_state.page == "daily":
     if st.button("◀", key="back_from_daily"): st.session_state.page = "list"; st.rerun()
@@ -429,7 +438,6 @@ elif st.session_state.page == "add_friend":
                 with col_n:
                     st.write(f"👤 **{fname}**")
                 with col_v:
-                    # 個別の表示・非表示切り替え
                     v_label = "表示中" if fvis else "非表示"
                     if st.toggle(v_label, value=bool(fvis), key=f"tog_{fid}"):
                         if not fvis:
