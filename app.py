@@ -75,7 +75,8 @@ st.markdown("""
     div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background-color: #F3E5F5 !important; border-radius: 12px !important; border: none !important; color: #B282E6 !important; }
     .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 10px; background: #fafafa; border-radius: 0 8px 8px 0; }
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
-    .friend-label { color: #888; font-size: 0.8rem; margin-top: 10px; }
+    .friend-header { color: #888; font-size: 1.2rem; font-weight: bold; margin: 30px 0 10px 0; border-bottom: 1px solid #EEE; padding-bottom: 5px; }
+    .owner-tag { color: #888; font-size: 0.75rem; margin-bottom: 2px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -157,57 +158,62 @@ if st.session_state.page == "list":
     with col_sub1: st.button("全履歴(LOG)", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'log_all'))
     with col_sub2: st.button("友達を追加", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
     st.divider()
-    
-    # 自分の原稿と友達の原稿を取得
-    c.execute("""
-        SELECT works.*, users.username FROM works 
-        JOIN users ON works.user_id = users.id 
-        WHERE works.user_id = ? 
-        OR works.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
-    """, (st.session_state.user_id, st.session_state.user_id))
-    all_works = c.fetchall()
 
-    # 自分の原稿のカウント用
-    my_works = [w for w in all_works if w[1] == st.session_state.user_id]
+    # 1. 自分の原稿セクション
+    c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
+    my_works = c.fetchall()
     completed_my_count = sum(1 for w in my_works if calculate_total_percent(w) >= 100.0)
 
     col_t, col_add = st.columns([7, 1.5])
-    col_t.subheader(f"原稿一覧 ({completed_my_count} / {len(my_works)})")
+    col_t.subheader(f"自分の原稿 ({completed_my_count} / {len(my_works)})")
     with col_add:
         if st.button("＋", type="primary"): st.session_state.edit_id, st.session_state.page = None, "form"; st.rerun()
-            
-    for work in all_works:
-        wd = get_work_dict(work)
-        percent = calculate_total_percent(work)
-        owner_name = work[21]
-        
-        # 友達の原稿には名前を表示
-        if wd["user_id"] != st.session_state.user_id:
-            st.markdown(f'<div class="friend-label">👤 {owner_name}さんの原稿</div>', unsafe_allow_html=True)
-            
+
+    for work in my_works:
+        wd = get_work_dict(work); percent = calculate_total_percent(work)
         st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-        
         col_bar, col_ed, col_rd = st.columns([4, 1.5, 1.5])
         with col_bar:
             if percent < 100.0:
                 st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="color:#C199E5; font-weight:bold; font-size:14px; padding-top:5px;">★ 完了済み (100%)</div>', unsafe_allow_html=True)
-        
         with col_ed:
-            if wd["user_id"] == st.session_state.user_id:
-                if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.edit_id, st.session_state.page = wd['id'], "form"; st.rerun()
+            if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.edit_id, st.session_state.page = wd['id'], "form"; st.rerun()
         with col_rd:
             if st.button("閲覧", key=f"v_{wd['id']}", use_container_width=True, type="primary"): st.session_state.view_id, st.session_state.page = wd['id'], "view"; st.rerun()
+
+    # 2. 友達の原稿セクション
+    c.execute("""
+        SELECT works.*, users.username FROM works 
+        JOIN users ON works.user_id = users.id 
+        WHERE works.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
+    """, (st.session_state.user_id,))
+    friend_works = c.fetchall()
+
+    if friend_works:
+        st.markdown('<div class="friend-header">友達の原稿</div>', unsafe_allow_html=True)
+        for work in friend_works:
+            wd = get_work_dict(work); percent = calculate_total_percent(work); owner_name = work[21]
+            st.markdown(f'<div class="owner-tag">👤 {owner_name}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
+            col_bar, col_rd = st.columns([7, 1.5])
+            with col_bar:
+                if percent < 100.0:
+                    st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div style="color:#C199E5; font-weight:bold; font-size:14px; padding-top:5px;">★ 完了済み (100%)</div>', unsafe_allow_html=True)
+            with col_rd:
+                if st.button("閲覧", key=f"v_f_{wd['id']}", use_container_width=True, type="primary"): st.session_state.view_id, st.session_state.page = wd['id'], "view"; st.rerun()
 
 elif st.session_state.page == "daily":
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     works = c.fetchall()
     if works:
-        titles = [w[2] for w in works]
-        sel_title = st.selectbox("作品名", titles)
+        titles = [w[2] for w in works]; sel_title = st.selectbox("作品名", titles)
         w = next(x for x in works if x[2] == sel_title)
         wd = get_work_dict(w); unit, labels = get_labels(w)
         p = st.number_input(f"{labels[0]} (現在: {wd['plot_percent']}%)", min_value=0, max_value=100-wd['plot_percent'])
@@ -236,8 +242,7 @@ elif st.session_state.page == "form":
         if h_ill: t_ill = st.number_input("目標の挿絵枚数", min_value=1, value=max(1, wd['total_illustrations']))
         h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
     elif w_type == "漫画": h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
-    t = st.text_input("作品名", value=wd['title'])
-    pg = st.number_input(f"目標の{n_unit if w_type == '小説' else '総ページ'}数", min_value=1, value=wd['total_pages'])
+    t, pg = st.text_input("作品名", value=wd['title']), st.number_input(f"目標の{n_unit if w_type == '小説' else '総ページ'}数", min_value=1, value=wd['total_pages'])
     ev, ed, dd = st.text_input("イベント名", value=wd['event_name']), st.date_input("イベント日", value=date.fromisoformat(wd['event_date'])), st.date_input("締切日", value=date.fromisoformat(wd['deadline']))
     if st.button("保存", type="primary", use_container_width=True):
         if is_e: c.execute("UPDATE works SET title=?, total_pages=?, event_name=?, event_date=?, deadline=?, work_type=?, has_illustrations=?, total_illustrations=?, has_cover=?, novel_unit=? WHERE id=?", (t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit, wd['id']))
@@ -246,8 +251,7 @@ elif st.session_state.page == "form":
 
 elif st.session_state.page == "view":
     c.execute("SELECT works.*, users.username FROM works JOIN users ON works.user_id = users.id WHERE works.id=?", (st.session_state.view_id,))
-    row = c.fetchone()
-    wd = get_work_dict(row); uname = row[21]
+    row = c.fetchone(); wd = get_work_dict(row); uname = row[21]
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
     st.subheader(f"{uname}さんの：{wd['title']}")
     p = calculate_total_percent(row); st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{p}%;"></div></div><div style="text-align:right;">{p}%</div>', unsafe_allow_html=True)
