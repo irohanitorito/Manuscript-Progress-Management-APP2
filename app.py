@@ -64,10 +64,32 @@ st.markdown("""
     .big-datetime { text-align: center; font-size: clamp(1.8rem, 8vw, 2.8rem); font-weight: bold; color: #B282E6; margin-bottom: 15px; }
     
     div.stButton > button { border-radius: 12px !important; font-weight: bold !important; width: 100%; }
-    div.stButton > button[kind="primary"] { background-color: #C199E5 !important; color: white !important; border: none !important; height: 3rem !important; }
-    div.stButton > button[kind="secondary"] { border: 2px solid #C199E5 !important; color: #C199E5 !important; background-color: white !important; }
+    
+    /* 編集・閲覧ボタンのサイズを完全に統一する設定 */
+    div.stButton > button[kind="primary"] { 
+        background-color: #C199E5 !important; 
+        color: white !important; 
+        border: none !important; 
+        height: 2.2rem !important; /* リスト内の高さを統一 */
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    div.stButton > button[kind="secondary"] { 
+        border: 2px solid #C199E5 !important; 
+        color: #C199E5 !important; 
+        background-color: white !important; 
+        height: 2.2rem !important; /* プライマリボタンと同じ高さに固定 */
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
 
-    [data-testid="column"] div.stButton > button { height: 2.2rem !important; font-size: 0.8rem !important; }
+    /* カラム内のボタンフォントサイズと余白を固定 */
+    [data-testid="column"] div.stButton > button { 
+        font-size: 0.8rem !important; 
+        padding: 0 !important;
+    }
 
     .progress-container { width: 100%; background-color: #F0F0F0; border-radius: 10px; margin: 5px 0; height: 12px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background-color: #C199E5; transition: width 0.3s ease; }
@@ -151,6 +173,8 @@ if st.session_state.page == "list":
         st.markdown(f'<div><span class="type-badge">{work[7]}</span><small style="color:#B282E6;">{work[5]} {work[4]}</small></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{work[6]}〆 {work[2]}</div>', unsafe_allow_html=True)
         percent = calculate_total_percent(work)
+        
+        # ご希望のレイアウト（進捗バー：編集：閲覧 ＝ 4：1.5：1.5）
         col_bar, col_ed, col_rd = st.columns([4, 1.5, 1.5])
         with col_bar:
             st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
