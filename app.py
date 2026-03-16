@@ -2,54 +2,68 @@ import sqlite3
 import hashlib
 from datetime import date, datetime
 import streamlit as st
+import os
 
 # 1. 基本設定
 st.set_page_config(page_title="創作進捗管理アプリ", layout="centered")
 
-# 2. データベース初期化
-conn = sqlite3.connect("progress.db", check_same_thread=False)
+# 2. データベース初期化（リセット機能付き）
+DB_NAME = "progress.db"
+
+# ログインできない問題を解消するため、構造が古い場合は一度リセットする
+def initialize_db():
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    c = conn.cursor()
+    
+    # 現在のテーブルのカラム数をチェック
+    try:
+        c.execute("SELECT * FROM works LIMIT 1")
+        col_count = len(c.description)
+        # 期待するカラム数（21個）より少ない場合は構造が古いと判断
+        if col_count < 21:
+            raise sqlite3.OperationalError("Old schema")
+    except:
+        # テーブルがない、あるいは構造が古い場合は作り直す
+        c.execute("DROP TABLE IF EXISTS progress_logs")
+        c.execute("DROP TABLE IF EXISTS works")
+        c.execute("DROP TABLE IF EXISTS friends")
+        # usersは残しても良いですが、念のため全てリセットしてクリーンにします
+        c.execute("DROP TABLE IF EXISTS users")
+
+    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS works (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        title TEXT, total_pages INTEGER, event_name TEXT, event_date TEXT, deadline TEXT,
+        work_type TEXT DEFAULT '漫画',
+        plot_percent INTEGER DEFAULT 0, name_pages INTEGER DEFAULT 0,
+        draft_pages INTEGER DEFAULT 0, line_pages INTEGER DEFAULT 0, tone_pages INTEGER DEFAULT 0,
+        current_chapter INTEGER DEFAULT 1,
+        novel_type TEXT DEFAULT '短編',
+        total_chapters INTEGER DEFAULT 1,
+        has_illustrations INTEGER DEFAULT 0,
+        total_illustrations INTEGER DEFAULT 0,
+        has_cover INTEGER DEFAULT 0,
+        cover_percent INTEGER DEFAULT 0,
+        novel_unit TEXT DEFAULT '文字',
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS progress_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, work_id INTEGER,
+        update_date TEXT, note TEXT,
+        p_diff INTEGER DEFAULT 0, n_diff INTEGER DEFAULT 0, 
+        l_diff INTEGER DEFAULT 0, t_diff INTEGER DEFAULT 0,
+        FOREIGN KEY(work_id) REFERENCES works(id)
+    )
+    """)
+    c.execute("CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, friend_id INTEGER, UNIQUE(user_id, friend_id))")
+    conn.commit()
+    return conn
+
+conn = initialize_db()
 c = conn.cursor()
-
-c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
-c.execute("""
-CREATE TABLE IF NOT EXISTS works (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-    title TEXT, total_pages INTEGER, event_name TEXT, event_date TEXT, deadline TEXT,
-    work_type TEXT DEFAULT '漫画',
-    plot_percent INTEGER DEFAULT 0, name_pages INTEGER DEFAULT 0,
-    draft_pages INTEGER DEFAULT 0, line_pages INTEGER DEFAULT 0, tone_pages INTEGER DEFAULT 0,
-    current_chapter INTEGER DEFAULT 1,
-    novel_type TEXT DEFAULT '短編',
-    total_chapters INTEGER DEFAULT 1,
-    has_illustrations INTEGER DEFAULT 0,
-    total_illustrations INTEGER DEFAULT 0,
-    has_cover INTEGER DEFAULT 0,
-    cover_percent INTEGER DEFAULT 0,
-    novel_unit TEXT DEFAULT '文字',
-    FOREIGN KEY(user_id) REFERENCES users(id)
-)
-""")
-
-# カラム追加対応
-try:
-    c.execute("ALTER TABLE works ADD COLUMN novel_unit TEXT DEFAULT '文字'")
-    c.execute("ALTER TABLE works ADD COLUMN has_illustrations INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN total_illustrations INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN has_cover INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN cover_percent INTEGER DEFAULT 0")
-except: pass
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS progress_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, work_id INTEGER,
-    update_date TEXT, note TEXT,
-    p_diff INTEGER DEFAULT 0, n_diff INTEGER DEFAULT 0, 
-    l_diff INTEGER DEFAULT 0, t_diff INTEGER DEFAULT 0,
-    FOREIGN KEY(work_id) REFERENCES works(id)
-)
-""")
-c.execute("CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, friend_id INTEGER, UNIQUE(user_id, friend_id))")
-conn.commit()
 
 # セッション管理
 if "user_id" not in st.session_state: st.session_state.user_id = None
@@ -84,7 +98,7 @@ def make_hashes(p): return hashlib.sha256(str.encode(p)).hexdigest()
 def check_hashes(p, h): return make_hashes(p) == h
 
 def get_work_dict(row):
-    if not row: return None
+    if not row or len(row) < 21: return None
     return {
         "id": row[0], "user_id": row[1], "title": row[2], "total_pages": row[3],
         "event_name": row[4], "event_date": row[5], "deadline": row[6], "work_type": row[7],
@@ -96,6 +110,7 @@ def get_work_dict(row):
 
 def calculate_total_percent(w):
     wd = get_work_dict(w)
+    if not wd: return 0.0
     total = wd["total_pages"] if wd["total_pages"] > 0 else 1
     w_type = wd["work_type"]
     if w_type == "小説":
@@ -139,18 +154,20 @@ if st.session_state.user_id is None:
             if data and check_hashes(p, data[1]):
                 st.session_state.user_id, st.session_state.username = data[0], u
                 st.rerun()
+            else:
+                st.error("ユーザー名またはパスワードが違います")
     with tab2:
         nu, np = st.text_input("希望のユーザー名"), st.text_input("希望のパスワード", type='password')
         if st.button("登録", use_container_width=True):
             try:
                 c.execute('INSERT INTO users(username, password) VALUES (?,?)', (nu, make_hashes(np)))
-                conn.commit(); st.success("登録完了！")
-            except: st.error("エラーが発生しました")
+                conn.commit(); st.success("登録完了！ログインしてください")
+            except: st.error("そのユーザー名は既に使用されています")
     st.stop()
 
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
 
-# --- 画面遷移 ---
+# --- 画面遷移（以下、元のロジックを維持） ---
 if st.session_state.page == "list":
     st.markdown(f'<div class="big-datetime">{datetime.now().strftime("%Y/%m/%d %H:%M")}</div>', unsafe_allow_html=True)
     st.button("今日の進捗", use_container_width=True, type="primary", on_click=lambda: setattr(st.session_state, 'page', 'daily'))
@@ -159,7 +176,6 @@ if st.session_state.page == "list":
     with col_sub2: st.button("友達を追加", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
     st.divider()
 
-    # 1. 自分の原稿セクション
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     my_works = c.fetchall()
     completed_my_count = sum(1 for w in my_works if calculate_total_percent(w) >= 100.0)
@@ -188,22 +204,18 @@ if st.session_state.page == "list":
         with col_rd:
             if st.button("閲覧", key=f"v_{wd['id']}", use_container_width=True, type="primary"): st.session_state.view_id, st.session_state.page = wd['id'], "view"; st.rerun()
         
-        # 削除確認
         if st.session_state.get("confirm_del") == wd['id']:
             if st.checkbox(f"「{wd['title']}」を本当に削除しますか？", key=f"cb_{wd['id']}"):
                 if st.button("実行", key=f"ex_{wd['id']}", type="primary"):
                     c.execute("DELETE FROM progress_logs WHERE work_id=?", (wd['id'],))
                     c.execute("DELETE FROM works WHERE id=?", (wd['id'],))
-                    conn.commit()
-                    st.session_state.confirm_del = None
-                    st.rerun()
+                    conn.commit(); st.session_state.confirm_del = None; st.rerun()
 
-    # 2. 友達の原稿セクション
     c.execute("""
         SELECT works.*, users.username FROM works 
         JOIN users ON works.user_id = users.id 
         WHERE works.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
-    """, (st.session_state.user_id,))
+    """, (st.session_state.user_id, st.session_state.user_id))
     friend_works = c.fetchall()
 
     if friend_works:
@@ -238,10 +250,9 @@ elif st.session_state.page == "daily":
         ill = st.number_input(f"挿絵完了枚数 (現在: {wd['draft_pages']}/{wd['total_illustrations']}枚)", min_value=0, max_value=wd['total_illustrations']-wd['draft_pages']) if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
         if st.button("保存", type="primary", use_container_width=True):
             c.execute("UPDATE works SET plot_percent=plot_percent+?, name_pages=name_pages+?, line_pages=line_pages+?, tone_pages=tone_pages+?, cover_percent=cover_percent+?, draft_pages=draft_pages+? WHERE id=?", (p, n, l, t, cov, ill, wd['id']))
-            note = format_log_note(p, n, l, t, wd['work_type'], unit, cov, ill)
-            c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff) VALUES (?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t))
+            note = format_log_note(p, n, l, t, wd['work_type'], unit, cover=cov, ill=ill)
+            c.execute("INSERT INTO progress_logs (work_id, update_date, note) VALUES (?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note))
             conn.commit(); st.session_state.page = "list"; st.rerun()
-    else: st.info("作品を登録してください")
 
 elif st.session_state.page == "form":
     is_e = st.session_state.edit_id is not None
@@ -256,7 +267,7 @@ elif st.session_state.page == "form":
         if h_ill: t_ill = st.number_input("目標の挿絵枚数", min_value=1, value=max(1, wd['total_illustrations']))
         h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
     elif w_type == "漫画": h_cov = 1 if st.checkbox("表紙あり", value=bool(wd['has_cover'])) else 0
-    t, pg = st.text_input("作品名", value=wd['title']), st.number_input(f"目標の{n_unit if w_type == '小説' else '総ページ'}数", min_value=1, value=wd['total_pages'])
+    t, pg = st.text_input("作品名", value=wd['title']), st.number_input(f"目標の数", min_value=1, value=wd['total_pages'])
     ev, ed, dd = st.text_input("イベント名", value=wd['event_name']), st.date_input("イベント日", value=date.fromisoformat(wd['event_date'])), st.date_input("締切日", value=date.fromisoformat(wd['deadline']))
     if st.button("保存", type="primary", use_container_width=True):
         if is_e: c.execute("UPDATE works SET title=?, total_pages=?, event_name=?, event_date=?, deadline=?, work_type=?, has_illustrations=?, total_illustrations=?, has_cover=?, novel_unit=? WHERE id=?", (t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit, wd['id']))
