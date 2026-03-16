@@ -10,24 +10,27 @@ st.set_page_config(page_title="創作進捗管理アプリ", layout="centered")
 # 2. データベース初期化（リセット機能付き）
 DB_NAME = "progress.db"
 
-# ログインできない問題を解消するため、構造が古い場合は一度リセットする
-def initialize_db():
+def initialize_db(force_reset=False):
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     c = conn.cursor()
     
-    # 現在のテーブルのカラム数をチェック
-    try:
-        c.execute("SELECT * FROM works LIMIT 1")
-        col_count = len(c.description)
-        # 期待するカラム数（21個）より少ない場合は構造が古いと判断
-        if col_count < 21:
-            raise sqlite3.OperationalError("Old schema")
-    except:
-        # テーブルがない、あるいは構造が古い場合は作り直す
+    if force_reset:
         c.execute("DROP TABLE IF EXISTS progress_logs")
         c.execute("DROP TABLE IF EXISTS works")
         c.execute("DROP TABLE IF EXISTS friends")
-        # usersは残しても良いですが、念のため全てリセットしてクリーンにします
+        c.execute("DROP TABLE IF EXISTS users")
+        conn.commit()
+
+    # カラム数チェックによる自動更新ロジック
+    try:
+        c.execute("SELECT * FROM works LIMIT 1")
+        col_count = len(c.description)
+        if col_count < 21:
+            raise sqlite3.OperationalError("Old schema")
+    except:
+        c.execute("DROP TABLE IF EXISTS progress_logs")
+        c.execute("DROP TABLE IF EXISTS works")
+        c.execute("DROP TABLE IF EXISTS friends")
         c.execute("DROP TABLE IF EXISTS users")
 
     c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
@@ -62,6 +65,7 @@ def initialize_db():
     conn.commit()
     return conn
 
+# DB接続
 conn = initialize_db()
 c = conn.cursor()
 
@@ -144,6 +148,15 @@ def format_log_note(p, n, l, t, w_type, unit, cover=0, ill=0):
 # --- 認証機能 ---
 if st.session_state.user_id is None:
     st.markdown('<div class="header-bar"><div class="header-title">進捗管理ログイン</div></div>', unsafe_allow_html=True)
+    
+    # 【安全な手動リセットボタン】
+    with st.expander("メンテナンス用データリセット"):
+        st.write("どうしてもログインできない場合、全データをリセットして初期化します。")
+        if st.button("データベースをリセットする"):
+            initialize_db(force_reset=True)
+            st.success("リセット完了。ページを更新してください。")
+            st.rerun()
+
     tab1, tab2 = st.tabs(["ログイン", "新規登録"])
     with tab1:
         u = st.text_input("ユーザー名")
@@ -167,7 +180,7 @@ if st.session_state.user_id is None:
 
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
 
-# --- 画面遷移（以下、元のロジックを維持） ---
+# --- 画面遷移 ---
 if st.session_state.page == "list":
     st.markdown(f'<div class="big-datetime">{datetime.now().strftime("%Y/%m/%d %H:%M")}</div>', unsafe_allow_html=True)
     st.button("今日の進捗", use_container_width=True, type="primary", on_click=lambda: setattr(st.session_state, 'page', 'daily'))
@@ -211,17 +224,19 @@ if st.session_state.page == "list":
                     c.execute("DELETE FROM works WHERE id=?", (wd['id'],))
                     conn.commit(); st.session_state.confirm_del = None; st.rerun()
 
+    # 友達の原稿（クエリ引数のバグを修正）
     c.execute("""
         SELECT works.*, users.username FROM works 
         JOIN users ON works.user_id = users.id 
         WHERE works.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
-    """, (st.session_state.user_id, st.session_state.user_id))
+    """, (st.session_state.user_id,))
     friend_works = c.fetchall()
 
     if friend_works:
         st.markdown('<div class="friend-header">友達の原稿</div>', unsafe_allow_html=True)
         for work in friend_works:
-            wd = get_work_dict(work); percent = calculate_total_percent(work); owner_name = work[21]
+            wd = get_work_dict(work); percent = calculate_total_percent(work)
+            owner_name = work[21] if len(work) > 21 else "不明"
             st.markdown(f'<div class="owner-tag">👤 {owner_name}</div>', unsafe_allow_html=True)
             st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
@@ -253,6 +268,7 @@ elif st.session_state.page == "daily":
             note = format_log_note(p, n, l, t, wd['work_type'], unit, cover=cov, ill=ill)
             c.execute("INSERT INTO progress_logs (work_id, update_date, note) VALUES (?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note))
             conn.commit(); st.session_state.page = "list"; st.rerun()
+    else: st.info("作品を登録してください")
 
 elif st.session_state.page == "form":
     is_e = st.session_state.edit_id is not None
@@ -276,7 +292,7 @@ elif st.session_state.page == "form":
 
 elif st.session_state.page == "view":
     c.execute("SELECT works.*, users.username FROM works JOIN users ON works.user_id = users.id WHERE works.id=?", (st.session_state.view_id,))
-    row = c.fetchone(); wd = get_work_dict(row); uname = row[21]
+    row = c.fetchone(); wd = get_work_dict(row); uname = row[21] if row else "不明"
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
     st.subheader(f"{uname}さんの：{wd['title']}")
     p = calculate_total_percent(row); st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{p}%;"></div></div><div style="text-align:right;">{p}%</div>', unsafe_allow_html=True)
