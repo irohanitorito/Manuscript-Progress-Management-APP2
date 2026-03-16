@@ -280,12 +280,35 @@ elif st.session_state.page == "daily":
         titles = [w[2] for w in works]; sel_title = st.selectbox("作品名", titles)
         w = next(x for x in works if x[2] == sel_title)
         wd = get_work_dict(w); unit, labels = get_labels_from_type(wd['work_type'], wd['novel_unit'])
-        p = st.number_input(f"{labels[0]} (%)", min_value=0, key="daily_p")
-        n = st.number_input(f"{labels[1]} ({unit})", min_value=0, key="daily_n")
-        l = st.number_input(f"{labels[2]} ({unit})", min_value=0, key="daily_l")
-        t = st.number_input(f"{labels[3]} ({unit})", min_value=0, key="daily_t") if wd['work_type'] != "小説" else 0
-        cov = st.number_input(f"表紙 (%)", min_value=0, key="daily_cov") if wd['has_cover'] else 0
-        ill = st.number_input(f"挿絵 (枚)", min_value=0, key="daily_ill") if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
+        
+        # 修正箇所: 工程ごとの現在の進捗数を表示
+        st.caption(f"{labels[0]} の現状: {wd['plot_percent']} / 100 %")
+        p = st.number_input(f"{labels[0]} (%) 加算分", min_value=0, key="daily_p")
+        
+        st.caption(f"{labels[1]} の現状: {wd['name_pages']} / {wd['total_pages']} {unit}")
+        n = st.number_input(f"{labels[1]} ({unit}) 加算分", min_value=0, key="daily_n")
+        
+        st.caption(f"{labels[2]} の現状: {wd['line_pages']} / {wd['total_pages']} {unit}")
+        l = st.number_input(f"{labels[2]} ({unit}) 加算分", min_value=0, key="daily_l")
+        
+        if wd['work_type'] != "小説":
+            st.caption(f"{labels[3]} の現状: {wd['tone_pages']} / {wd['total_pages']} {unit}")
+            t = st.number_input(f"{labels[3]} ({unit}) 加算分", min_value=0, key="daily_t")
+        else:
+            t = 0
+            
+        if wd['has_cover']:
+            st.caption(f"表紙の現状: {wd['cover_percent']} / 100 %")
+            cov = st.number_input(f"表紙 (%) 加算分", min_value=0, key="daily_cov")
+        else:
+            cov = 0
+            
+        if wd['work_type'] == "小説" and wd['has_illustrations']:
+            st.caption(f"挿絵の現状: {wd['draft_pages']} / {wd['total_illustrations']} 枚")
+            ill = st.number_input(f"挿絵 (枚) 加算分", min_value=0, key="daily_ill")
+        else:
+            ill = 0
+
         if st.button("保存", type="primary", key="daily_save"):
             note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cover=cov, ill=ill)
             c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cov, ill))
@@ -452,3 +475,4 @@ elif st.session_state.page == "add_friend":
                         c.execute("DELETE FROM friends WHERE id=?", (fid,))
                         conn.commit(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
+                
