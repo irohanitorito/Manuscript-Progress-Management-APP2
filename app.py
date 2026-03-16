@@ -88,6 +88,7 @@ st.markdown("""
     div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background-color: #F3E5F5 !important; border-radius: 12px !important; border: none !important; color: #B282E6 !important; }
     .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 5px; background: #fafafa; border-radius: 0 8px 8px 0; width: 100%; }
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
+    .owner-tag { color: #888; font-size: 0.8rem; margin-bottom: 4px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,14 +104,15 @@ def update_work_totals(work_id):
 
 def get_work_dict(row):
     if not row: return None
-    d = list(row) + [0]*21
+    d = list(row) + [0]*22
     return {
         "id": d[0], "user_id": d[1], "title": d[2], "total_pages": d[3],
         "event_name": d[4], "event_date": d[5], "deadline": d[6], "work_type": d[7],
         "plot_percent": d[8], "name_pages": d[9], "draft_pages": d[10],
         "line_pages": d[11], "tone_pages": d[12], 
         "has_illustrations": d[16], "total_illustrations": d[17],
-        "has_cover": d[18], "cover_percent": d[19], "novel_unit": d[20]
+        "has_cover": d[18], "cover_percent": d[19], "novel_unit": d[20],
+        "owner_name": d[21] if len(d) > 21 else ""
     }
 
 def calculate_total_percent(w):
@@ -182,6 +184,7 @@ if st.session_state.page == "list":
     with col_sub2: st.button("友達を追加", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
     st.divider()
 
+    # 自分の原稿
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     my_works = c.fetchall()
     
@@ -208,6 +211,33 @@ if st.session_state.page == "list":
             if st.button("閲覧", key=f"v_btn_{wd['id']}", use_container_width=True, type="primary"): 
                 st.session_state.view_id, st.session_state.page = wd['id'], "view"
                 st.rerun()
+
+    st.divider()
+    
+    # 友達の原稿
+    st.subheader(f"友達の原稿")
+    c.execute("""
+        SELECT w.*, u.username FROM works w 
+        JOIN users u ON w.user_id = u.id 
+        WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
+    """, (st.session_state.user_id,))
+    friend_works = c.fetchall()
+    
+    if friend_works:
+        for f_work in friend_works:
+            wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
+            st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
+            col_bar, col_rd = st.columns([7, 1.5])
+            with col_bar:
+                st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+            with col_rd:
+                if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
+                    st.session_state.view_id, st.session_state.page = wd['id'], "view"
+                    st.rerun()
+    else:
+        st.info("表示できる友達の原稿はありません。")
 
 elif st.session_state.page == "daily":
     if st.button("◀", key="back_from_daily"): st.session_state.page = "list"; st.rerun()
@@ -262,6 +292,14 @@ elif st.session_state.page == "form":
         else:
             c.execute("INSERT INTO works (user_id, title, total_pages, event_name, event_date, deadline, work_type, has_illustrations, total_illustrations, has_cover, novel_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (st.session_state.user_id, t, pg, ev, str(ed), str(dd), w_type, h_ill, t_ill, h_cov, n_unit))
         conn.commit(); st.session_state.page = "list"; st.rerun()
+    
+    if is_e:
+        st.markdown("---")
+        with st.expander("危険な操作"):
+            if st.button("この作品を削除する", type="secondary", key="del_work_btn"):
+                c.execute("DELETE FROM progress_logs WHERE work_id=?", (wd['id'],))
+                c.execute("DELETE FROM works WHERE id=?", (wd['id'],))
+                conn.commit(); st.session_state.page = "list"; st.rerun()
 
 elif st.session_state.page == "log_all":
     if st.button("◀", key="back_from_logall"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
