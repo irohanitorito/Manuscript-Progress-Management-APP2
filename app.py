@@ -6,10 +6,11 @@ import streamlit as st
 # 1. 基本設定
 st.set_page_config(page_title="創作進捗管理アプリ", layout="centered")
 
-# 2. データベース初期化
+# 2. データベース初期化と構造修復
 conn = sqlite3.connect("progress.db", check_same_thread=False)
 c = conn.cursor()
 
+# 基本テーブル作成
 c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
 c.execute("""
 CREATE TABLE IF NOT EXISTS works (
@@ -30,14 +31,21 @@ CREATE TABLE IF NOT EXISTS works (
 )
 """)
 
-# カラム追加対応
-try:
-    c.execute("ALTER TABLE works ADD COLUMN novel_unit TEXT DEFAULT '文字'")
-    c.execute("ALTER TABLE works ADD COLUMN has_illustrations INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN total_illustrations INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN has_cover INTEGER DEFAULT 0")
-    c.execute("ALTER TABLE works ADD COLUMN cover_percent INTEGER DEFAULT 0")
-except: pass
+# 【重要】不足しているカラムを1つずつ安全に追加する（復旧ロジック）
+columns_to_add = [
+    ("novel_unit", "TEXT DEFAULT '文字'"),
+    ("has_illustrations", "INTEGER DEFAULT 0"),
+    ("total_illustrations", "INTEGER DEFAULT 0"),
+    ("has_cover", "INTEGER DEFAULT 0"),
+    ("cover_percent", "INTEGER DEFAULT 0")
+]
+
+for col_name, col_type in columns_to_add:
+    try:
+        c.execute(f"ALTER TABLE works ADD COLUMN {col_name} {col_type}")
+    except sqlite3.OperationalError:
+        # すでにカラムが存在する場合はエラーを無視して次へ進む
+        pass
 
 c.execute("""
 CREATE TABLE IF NOT EXISTS progress_logs (
@@ -159,7 +167,7 @@ if st.session_state.page == "list":
     with col_sub2: st.button("友達を追加", use_container_width=True, type="secondary", on_click=lambda: setattr(st.session_state, 'page', 'add_friend'))
     st.divider()
 
-    # 1. 自分の原稿セクション
+    # 自分の原稿
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     my_works = c.fetchall()
     completed_my_count = sum(1 for w in my_works if calculate_total_percent(w) >= 100.0)
@@ -167,13 +175,15 @@ if st.session_state.page == "list":
     col_t, col_add = st.columns([7, 1.5])
     col_t.subheader(f"自分の原稿 ({completed_my_count} / {len(my_works)})")
     with col_add:
-        if st.button("＋", type="primary"): st.session_state.edit_id, st.session_state.page = None, "form"; st.rerun()
+        if st.button("＋", type="primary"): 
+            st.session_state.edit_id = None
+            st.session_state.page = "form"
+            st.rerun()
 
     for work in my_works:
         wd = get_work_dict(work); percent = calculate_total_percent(work)
         st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-        
         col_bar, col_ed, col_del, col_rd = st.columns([3.5, 1.5, 1.5, 1.5])
         with col_bar:
             if percent < 100.0:
@@ -183,12 +193,10 @@ if st.session_state.page == "list":
         with col_ed:
             if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.edit_id, st.session_state.page = wd['id'], "form"; st.rerun()
         with col_del:
-            if st.button("削除", key=f"d_{wd['id']}", use_container_width=True, type="secondary"):
-                st.session_state.confirm_del = wd['id']
+            if st.button("削除", key=f"d_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.confirm_del = wd['id']
         with col_rd:
             if st.button("閲覧", key=f"v_{wd['id']}", use_container_width=True, type="primary"): st.session_state.view_id, st.session_state.page = wd['id'], "view"; st.rerun()
         
-        # 削除確認
         if st.session_state.get("confirm_del") == wd['id']:
             if st.checkbox(f"「{wd['title']}」を本当に削除しますか？", key=f"cb_{wd['id']}"):
                 if st.button("実行", key=f"ex_{wd['id']}", type="primary"):
@@ -198,7 +206,7 @@ if st.session_state.page == "list":
                     st.session_state.confirm_del = None
                     st.rerun()
 
-    # 2. 友達の原稿セクション
+    # 友達の原稿
     c.execute("""
         SELECT works.*, users.username FROM works 
         JOIN users ON works.user_id = users.id 
