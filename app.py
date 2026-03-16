@@ -89,6 +89,7 @@ st.markdown("""
     .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 5px; background: #fafafa; border-radius: 0 8px 8px 0; width: 100%; }
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
     .owner-tag { color: #888; font-size: 0.8rem; margin-bottom: 4px; font-weight: bold; }
+    .complete-badge { background-color: #4CAF50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -202,7 +203,10 @@ if st.session_state.page == "list":
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
         col_bar, col_ed, col_rd = st.columns([5.5, 1.5, 1.5])
         with col_bar:
-            st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+            if percent >= 100:
+                st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
         with col_ed:
             if st.button("編集", key=f"e_btn_{wd['id']}", use_container_width=True, type="secondary"): 
                 st.session_state.edit_id, st.session_state.page = wd['id'], "form"
@@ -231,7 +235,10 @@ if st.session_state.page == "list":
             st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
             col_bar, col_rd = st.columns([7, 1.5])
             with col_bar:
-                st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+                if percent >= 100:
+                    st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
             with col_rd:
                 if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
                     st.session_state.view_id, st.session_state.page = wd['id'], "view"
@@ -349,7 +356,14 @@ elif st.session_state.page == "view":
     row = c.fetchone(); wd = get_work_dict(row); uname = row[21] if row else "不明"
     if st.button("◀", key="back_from_view"): st.session_state.page = "list"; st.rerun()
     st.subheader(f"{uname}さんの：{wd['title']}")
-    p = calculate_total_percent(row); st.progress(p/100)
+    
+    p = calculate_total_percent(row)
+    if p >= 100:
+        st.markdown('<div style="text-align:center; padding: 20px; background:#f0fff0; border-radius:15px; border:2px solid #4CAF50; color:#4CAF50; font-weight:bold; font-size:1.5rem; margin-bottom:20px;">🎉 完了済み (100.0%)</div>', unsafe_allow_html=True)
+    else:
+        st.progress(p/100)
+        st.write(f"全体の進捗: **{p}%**")
+
     unit, labels = get_labels_from_type(wd['work_type'], wd['novel_unit'])
     st.write(f"**{labels[0]}**: {wd['plot_percent']} / 100 %")
     st.write(f"**{labels[1]}**: {wd['name_pages']} / {wd['total_pages']} {unit}")
