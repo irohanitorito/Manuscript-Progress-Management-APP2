@@ -14,9 +14,22 @@ def initialize_db():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     c = conn.cursor()
     
-    # ユーザーテーブル
-    c.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT)")
+    # ユーザーテーブル (show_friends_progress カラムを追加)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        username TEXT UNIQUE, 
+        password TEXT,
+        show_friends_progress INTEGER DEFAULT 1
+    )
+    """)
     
+    # 既存DBへのカラム追加（ユーザー設定用）
+    try:
+        c.execute("SELECT show_friends_progress FROM users LIMIT 1")
+    except:
+        c.execute("ALTER TABLE users ADD COLUMN show_friends_progress INTEGER DEFAULT 1")
+
     # 作品テーブル
     c.execute("""
     CREATE TABLE IF NOT EXISTS works (
@@ -174,6 +187,23 @@ if st.session_state.user_id is None:
             else: st.error("ユーザー名とパスワードを入力してください")
     st.stop()
 
+# --- ユーザー設定 (サイドバー) ---
+c.execute("SELECT show_friends_progress FROM users WHERE id=?", (st.session_state.user_id,))
+show_friends_config = c.fetchone()[0]
+
+with st.sidebar:
+    st.title("設定")
+    new_show_friends = st.checkbox("友達の進捗を表示する", value=bool(show_friends_config))
+    if new_show_friends != bool(show_friends_config):
+        c.execute("UPDATE users SET show_friends_progress=? WHERE id=?", (int(new_show_friends), st.session_state.user_id))
+        conn.commit()
+        st.rerun()
+    
+    if st.button("ログアウト"):
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.rerun()
+
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
 
 # --- メイン画面 ---
@@ -218,33 +248,34 @@ if st.session_state.page == "list":
 
     st.divider()
     
-    # 友達の原稿
-    st.subheader(f"友達の原稿")
-    c.execute("""
-        SELECT w.*, u.username FROM works w 
-        JOIN users u ON w.user_id = u.id 
-        WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
-    """, (st.session_state.user_id,))
-    friend_works = c.fetchall()
-    
-    if friend_works:
-        for f_work in friend_works:
-            wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
-            st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
-            st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-            col_bar, col_rd = st.columns([7, 1.5])
-            with col_bar:
-                if percent >= 100:
-                    st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
-            with col_rd:
-                if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
-                    st.session_state.view_id, st.session_state.page = wd['id'], "view"
-                    st.rerun()
-    else:
-        st.info("表示できる友達の原稿はありません。")
+    # 友達の原稿 (ON/OFF機能)
+    if show_friends_config:
+        st.subheader(f"友達の原稿")
+        c.execute("""
+            SELECT w.*, u.username FROM works w 
+            JOIN users u ON w.user_id = u.id 
+            WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?)
+        """, (st.session_state.user_id,))
+        friend_works = c.fetchall()
+        
+        if friend_works:
+            for f_work in friend_works:
+                wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
+                st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
+                col_bar, col_rd = st.columns([7, 1.5])
+                with col_bar:
+                    if percent >= 100:
+                        st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+                with col_rd:
+                    if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
+                        st.session_state.view_id, st.session_state.page = wd['id'], "view"
+                        st.rerun()
+        else:
+            st.info("表示できる友達の原稿はありません。")
 
 elif st.session_state.page == "daily":
     if st.button("◀", key="back_from_daily"): st.session_state.page = "list"; st.rerun()
@@ -310,13 +341,28 @@ elif st.session_state.page == "form":
 
 elif st.session_state.page == "log_all":
     if st.button("◀", key="back_from_logall"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
-    c.execute("""
-        SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
-               pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
-               w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
-        FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
-        WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?) ORDER BY pl.id DESC
-    """, (st.session_state.user_id, st.session_state.user_id))
+    
+    # ON/OFF設定に基づいたクエリ
+    if show_friends_config:
+        query = """
+            SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
+                   pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
+                   w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
+            FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
+            WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?) ORDER BY pl.id DESC
+        """
+        params = (st.session_state.user_id, st.session_state.user_id)
+    else:
+        query = """
+            SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id, 
+                   pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
+                   w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
+            FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
+            WHERE w.user_id = ? ORDER BY pl.id DESC
+        """
+        params = (st.session_state.user_id,)
+
+    c.execute(query, params)
     
     for log in c.fetchall():
         lid, ldate, lnote, wtitle, uname, uid, lp, ln, ll, lt, lcov, lill, wid, wtype, lunit, h_cov, h_ill = log
