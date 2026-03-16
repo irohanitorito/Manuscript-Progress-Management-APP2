@@ -67,6 +67,7 @@ if "username" not in st.session_state: st.session_state.username = None
 if "page" not in st.session_state: st.session_state.page = "list"
 if "edit_id" not in st.session_state: st.session_state.edit_id = None
 if "view_id" not in st.session_state: st.session_state.view_id = None
+if "log_edit_id" not in st.session_state: st.session_state.log_edit_id = None
 
 # 3. カスタムCSS
 st.markdown("""
@@ -264,7 +265,7 @@ elif st.session_state.page == "view":
     for i, val in enumerate(steps): st.write(f"**{labels[i]}**: {val} / {100 if i==0 else wd['total_pages']} {'%' if i==0 else unit}")
 
 elif st.session_state.page == "log_all":
-    if st.button("◀"): st.session_state.page = "list"; st.rerun()
+    if st.button("◀"): st.session_state.page = "list"; st.session_state.log_edit_id = None; st.rerun()
     c.execute("""
         SELECT pl.id, pl.update_date, pl.note, w.title, u.username, u.id 
         FROM progress_logs pl 
@@ -276,16 +277,35 @@ elif st.session_state.page == "log_all":
     
     logs = c.fetchall()
     for log in logs:
-        log_id, log_date, log_note, work_title, owner_name, owner_id = log
-        col_txt, col_del = st.columns([8, 2])
-        with col_txt:
-            st.markdown(f'<div class="log-card"><small>{log_date} - {owner_name}<br>{work_title}</small><br><b>{log_note}</b></div>', unsafe_allow_html=True)
-        with col_del:
-            # 自分のログのみ削除ボタンを表示
-            if owner_id == st.session_state.user_id:
-                if st.button("削除", key=f"del_log_{log_id}"):
-                    c.execute("DELETE FROM progress_logs WHERE id=?", (log_id,))
-                    conn.commit(); st.rerun()
+        lid, ldate, lnote, wtitle, uname, uid = log
+        is_mine = (uid == st.session_state.user_id)
+        
+        # 編集モードの判定
+        if st.session_state.log_edit_id == lid:
+            with st.container():
+                new_note = st.text_input("ログの編集", value=lnote, key=f"input_{lid}")
+                col_s1, col_s2, col_s3 = st.columns([2,2,6])
+                with col_s1:
+                    if st.button("保存", key=f"save_{lid}", type="primary"):
+                        c.execute("UPDATE progress_logs SET note=? WHERE id=?", (new_note, lid))
+                        conn.commit(); st.session_state.log_edit_id = None; st.rerun()
+                with col_s2:
+                    if st.button("取消", key=f"cancel_{lid}"):
+                        st.session_state.log_edit_id = None; st.rerun()
+        else:
+            col_txt, col_btn = st.columns([7.5, 2.5])
+            with col_txt:
+                st.markdown(f'<div class="log-card"><small>{ldate} - {uname}<br>{wtitle}</small><br><b>{lnote}</b></div>', unsafe_allow_html=True)
+            with col_btn:
+                if is_mine:
+                    sub_col1, sub_col2 = st.columns(2)
+                    with sub_col1:
+                        if st.button("編集", key=f"edit_btn_{lid}"):
+                            st.session_state.log_edit_id = lid; st.rerun()
+                    with sub_col2:
+                        if st.button("削除", key=f"del_btn_{lid}"):
+                            c.execute("DELETE FROM progress_logs WHERE id=?", (lid,))
+                            conn.commit(); st.rerun()
 
 elif st.session_state.page == "add_friend":
     if st.button("◀"): st.session_state.page = "list"; st.rerun()
