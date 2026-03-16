@@ -66,20 +66,10 @@ st.markdown("""
     .header-bar { background-color: #C199E5; height: 60px; display: flex; align-items: center; justify-content: center; margin: -60px -500px 30px -500px; }
     .header-title { color: white; font-size: 1.1rem; font-weight: bold; }
     .big-datetime { text-align: center; font-size: clamp(1.8rem, 8vw, 2.8rem); font-weight: bold; color: #B282E6; margin-bottom: 15px; }
-    
     div.stButton > button { border-radius: 12px !important; font-weight: bold !important; width: 100%; }
-    
-    div.stButton > button[kind="primary"] { 
-        background-color: #C199E5 !important; color: white !important; border: none !important; height: 2.2rem !important;
-        display: flex !important; align-items: center !important; justify-content: center !important;
-    }
-    div.stButton > button[kind="secondary"] { 
-        border: 2px solid #C199E5 !important; color: #C199E5 !important; background-color: white !important; height: 2.2rem !important;
-        display: flex !important; align-items: center !important; justify-content: center !important;
-    }
-
+    div.stButton > button[kind="primary"] { background-color: #C199E5 !important; color: white !important; border: none !important; height: 2.2rem !important; display: flex !important; align-items: center !important; justify-content: center !important; }
+    div.stButton > button[kind="secondary"] { border: 2px solid #C199E5 !important; color: #C199E5 !important; background-color: white !important; height: 2.2rem !important; display: flex !important; align-items: center !important; justify-content: center !important; }
     [data-testid="column"] div.stButton > button { font-size: 0.8rem !important; padding: 0 !important; }
-
     .progress-container { width: 100%; background-color: #F0F0F0; border-radius: 10px; margin: 5px 0; height: 12px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background-color: #C199E5; transition: width 0.3s ease; }
     div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background-color: #F3E5F5 !important; border-radius: 12px !important; border: none !important; color: #B282E6 !important; }
@@ -105,8 +95,20 @@ def get_work_dict(row):
 def calculate_total_percent(w):
     wd = get_work_dict(w)
     total = wd["total_pages"] if wd["total_pages"] > 0 else 1
-    scores = [wd["plot_percent"], (wd["name_pages"]/total*100), (wd["line_pages"]/total*100), (wd["tone_pages"]/total*100)]
-    if wd["work_type"] != "イラスト" and wd["has_cover"]: scores.append(wd["cover_percent"])
+    w_type = wd["work_type"]
+    
+    if w_type == "小説":
+        # 小説：プロット、執筆、推敲の3工程
+        scores = [wd["plot_percent"], (wd["name_pages"]/total*100), (wd["line_pages"]/total*100)]
+        if wd["has_cover"]: scores.append(wd["cover_percent"])
+        if wd["has_illustrations"] and wd["total_illustrations"] > 0:
+            scores.append((wd["draft_pages"] / wd["total_illustrations"]) * 100)
+    elif w_type == "イラスト":
+        scores = [wd["plot_percent"], (wd["name_pages"]/total*100), (wd["line_pages"]/total*100), (wd["tone_pages"]/total*100)]
+    else: # 漫画
+        scores = [wd["plot_percent"], (wd["name_pages"]/total*100), (wd["line_pages"]/total*100), (wd["tone_pages"]/total*100)]
+        if wd["has_cover"]: scores.append(wd["cover_percent"])
+    
     avg = sum(scores) / len(scores)
     return round(max(0.0, min(float(avg), 100.0)), 1)
 
@@ -114,7 +116,7 @@ def get_labels(w):
     wd = get_work_dict(w)
     w_type = wd["work_type"]
     if w_type == "イラスト": return "枚", ["構成", "ラフ/下書き", "線画", "塗り/仕上げ"]
-    elif w_type == "小説": return wd["novel_unit"], ["プロット","執筆", "推敲/校正", "調整"]
+    elif w_type == "小説": return wd["novel_unit"], ["プロット","執筆", "推敲/校正"]
     else: return "P", ["プロット", "ネーム", "線画", "トーン/仕上げ"]
 
 def format_log_note(p, n, l, t, w_type, unit, cover=0, ill=0):
@@ -122,7 +124,7 @@ def format_log_note(p, n, l, t, w_type, unit, cover=0, ill=0):
     if p: parts.append(f"工程1 +{p}%")
     if n: parts.append(f"工程2 +{n}{unit}")
     if l: parts.append(f"工程3 +{l}{unit}")
-    if t: parts.append(f"工程4 +{t}{unit}")
+    if t and w_type != "小説": parts.append(f"工程4 +{t}{unit}")
     if cover: parts.append(f"表紙 +{cover}%")
     if ill: parts.append(f"挿絵 +{ill}枚")
     return " / ".join(parts) if parts else "更新なし"
@@ -163,8 +165,6 @@ if st.session_state.page == "list":
     
     c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
     my_works = c.fetchall()
-    
-    # 作品数と完了数の集計
     total_count = len(my_works)
     completed_count = 0
     work_status_list = []
@@ -174,7 +174,6 @@ if st.session_state.page == "list":
         work_status_list.append((w, p))
 
     col_t, col_add = st.columns([7, 1.5])
-    # 完了数 / 全作品数 を表示
     col_t.subheader(f"自分の原稿 ({completed_count} / {total_count})")
     with col_add:
         if st.button("＋", type="primary"): st.session_state.edit_id, st.session_state.page = None, "form"; st.rerun()
@@ -183,15 +182,12 @@ if st.session_state.page == "list":
         wd = get_work_dict(work)
         st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
         st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-        
         col_bar, col_ed, col_rd = st.columns([4, 1.5, 1.5])
         with col_bar:
-            # 100%未満の場合のみプログレスバーを表示
             if percent < 100.0:
                 st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="color:#C199E5; font-weight:bold; font-size:14px; padding-top:5px;">★ 完了済み (100%)</div>', unsafe_allow_html=True)
-                
         with col_ed:
             if st.button("編集", key=f"e_{wd['id']}", use_container_width=True, type="secondary"): st.session_state.edit_id, st.session_state.page = wd['id'], "form"; st.rerun()
         with col_rd:
@@ -207,14 +203,14 @@ elif st.session_state.page == "daily":
         w = next(x for x in works if x[2] == sel_title)
         wd = get_work_dict(w)
         unit, labels = get_labels(w)
-        
         p = st.number_input(f"{labels[0]} (現在: {wd['plot_percent']}%)", min_value=0, max_value=100-wd['plot_percent'])
         n = st.number_input(f"{labels[1]} (現在: {wd['name_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['name_pages'])
         l = st.number_input(f"{labels[2]} (現在: {wd['line_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['line_pages'])
-        t = st.number_input(f"{labels[3]} (現在: {wd['tone_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['tone_pages'])
+        t = 0
+        if wd['work_type'] != "小説":
+            t = st.number_input(f"{labels[3]} (現在: {wd['tone_pages']}/{wd['total_pages']}{unit})", min_value=0, max_value=wd['total_pages']-wd['tone_pages'])
         cov = st.number_input(f"表紙進捗 (現在: {wd['cover_percent']}%)", min_value=0, max_value=100-wd['cover_percent']) if (wd['work_type'] != "イラスト" and wd['has_cover']) else 0
         ill = st.number_input(f"挿絵完了枚数 (現在: {wd['draft_pages']}/{wd['total_illustrations']}枚)", min_value=0, max_value=wd['total_illustrations']-wd['draft_pages']) if (wd['work_type'] == "小説" and wd['has_illustrations']) else 0
-        
         if st.button("保存", type="primary", use_container_width=True):
             c.execute("UPDATE works SET plot_percent=plot_percent+?, name_pages=name_pages+?, line_pages=line_pages+?, tone_pages=tone_pages+?, cover_percent=cover_percent+?, draft_pages=draft_pages+? WHERE id=?", (p, n, l, t, cov, ill, wd['id']))
             note = format_log_note(p, n, l, t, wd['work_type'], unit, cov, ill)
@@ -252,7 +248,9 @@ elif st.session_state.page == "view":
     st.subheader(f"{uname}さんの：{wd['title']}")
     p = calculate_total_percent(row); st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{p}%;"></div></div><div style="text-align:right;">{p}%</div>', unsafe_allow_html=True)
     unit, labels = get_labels(row)
-    steps = [wd['plot_percent'], wd['name_pages'], wd['line_pages'], wd['tone_pages']]
+    # 小説の場合は3工程、それ以外は4工程表示
+    steps = [wd['plot_percent'], wd['name_pages'], wd['line_pages']]
+    if wd['work_type'] != "小説": steps.append(wd['tone_pages'])
     for i, val in enumerate(steps): st.write(f"**{labels[i]}**: {val} / {100 if i==0 else wd['total_pages']} {'%' if i==0 else unit}")
     if wd['work_type'] != "イラスト" and wd['has_cover']: st.write(f"**表紙**: {wd['cover_percent']} / 100 %")
     if wd['work_type'] == "小説" and wd['has_illustrations']: st.write(f"**挿絵**: {wd['draft_pages']} / {wd['total_illustrations']} 枚")
