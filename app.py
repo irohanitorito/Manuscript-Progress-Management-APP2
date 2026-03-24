@@ -161,7 +161,8 @@ def format_log_note(p, n, l, t, w_type, unit, labels, cover=0, ill=0):
 # --- 認証機能 ---
 if st.session_state.user_id is None:
     st.markdown('<div class="header-bar"><div class="header-title">進捗管理ログイン</div></div>', unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["ログイン", "新規登録"])
+    tab1, tab2, tab3 = st.tabs(["ログイン", "新規登録", "パスワード変更"])
+    
     with tab1:
         u = st.text_input("ユーザー名", key="login_user")
         p = st.text_input("パスワード", type='password', key="login_pass")
@@ -172,6 +173,7 @@ if st.session_state.user_id is None:
                 st.session_state.user_id, st.session_state.username = data[0], u
                 st.rerun()
             else: st.error("ユーザー名またはパスワードが違います")
+            
     with tab2:
         nu = st.text_input("新しいユーザー名", key="reg_user")
         np = st.text_input("新しいパスワード", type='password', key="reg_pass")
@@ -183,6 +185,36 @@ if st.session_state.user_id is None:
                     st.success("登録完了！ログインしてください")
                 except: st.error("そのユーザー名は既に使用されています")
             else: st.error("ユーザー名とパスワードを入力してください")
+            
+    with tab3:
+        st.markdown("### パスワードの再設定")
+        cu = st.text_input("登録ユーザー名", key="change_user")
+        cp_old = st.text_input("現在のパスワード", type="password", key="change_old_pass")
+        cp_new = st.text_input("新しいパスワード", type="password", key="change_new_pass")
+        cp_conf = st.text_input("新しいパスワード（確認用）", type="password", key="change_conf_pass")
+        
+        if st.button("パスワードを変更する", type="primary", use_container_width=True):
+            if cu and cp_old and cp_new and cp_conf:
+                c.execute('SELECT password FROM users WHERE username = ?', (cu,))
+                user_data = c.fetchone()
+                
+                if not user_data:
+                    st.error("そのユーザー名は登録されていません")
+                elif not check_hashes(cp_old, user_data[0]):
+                    st.error("現在のパスワードが正しくありません")
+                elif cp_new != cp_conf:
+                    st.error("新しいパスワードが一致しません")
+                elif len(cp_new) < 4:
+                    st.error("新しいパスワードが短すぎます")
+                else:
+                    try:
+                        c.execute("UPDATE users SET password = ? WHERE username = ?", (make_hashes(cp_new), cu))
+                        conn.commit()
+                        st.success("パスワードを変更しました！新しいパスワードでログインしてください")
+                    except Exception as e:
+                        st.error(f"エラーが発生しました: {e}")
+            else:
+                st.error("すべての項目を入力してください")
     st.stop()
 
 st.markdown(f'<div class="header-bar"><div class="header-title">{st.session_state.username}さんの進捗</div></div>', unsafe_allow_html=True)
@@ -281,7 +313,6 @@ elif st.session_state.page == "daily":
         w = next(x for x in works if x[2] == sel_title)
         wd = get_work_dict(w); unit, labels = get_labels_from_type(wd['work_type'], wd['novel_unit'])
         
-        # 修正箇所: 工程ごとの現在の進捗数を表示
         st.caption(f"{labels[0]} の現状: {wd['plot_percent']} / 100 %")
         p = st.number_input(f"{labels[0]} (%) 加算分", min_value=0, key="daily_p")
         
@@ -475,4 +506,3 @@ elif st.session_state.page == "add_friend":
                         c.execute("DELETE FROM friends WHERE id=?", (fid,))
                         conn.commit(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
-                
