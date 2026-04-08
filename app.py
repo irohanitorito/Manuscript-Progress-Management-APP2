@@ -49,22 +49,27 @@ def initialize_db():
     )
     """)
     
-    # 友達テーブル (is_visible カラムを追加)
+    # 友達テーブル
     c.execute("""
     CREATE TABLE IF NOT EXISTS friends (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         user_id INTEGER, 
         friend_id INTEGER, 
         is_visible INTEGER DEFAULT 1,
+        is_approved INTEGER DEFAULT 1,
         UNIQUE(user_id, friend_id)
     )
     """)
     
-    # 既存DBへのカラム追加（友達の表示ON/OFF用）
     try:
         c.execute("SELECT is_visible FROM friends LIMIT 1")
     except:
         c.execute("ALTER TABLE friends ADD COLUMN is_visible INTEGER DEFAULT 1")
+    
+    try:
+        c.execute("SELECT is_approved FROM friends LIMIT 1")
+    except:
+        c.execute("ALTER TABLE friends ADD COLUMN is_approved INTEGER DEFAULT 1")
 
     conn.commit()
     return conn
@@ -94,13 +99,16 @@ st.markdown("""
     [data-testid="column"] div.stButton > button { font-size: 0.8rem !important; padding: 0 !important; }
     .progress-container { width: 100%; background-color: #F0F0F0; border-radius: 10px; margin: 5px 0; height: 12px; overflow: hidden; }
     .progress-bar-fill { height: 100%; background-color: #C199E5; transition: width 0.3s ease; }
+    .progress-bar-fill-complete { height: 100%; background-color: #4CAF50; transition: width 0.3s ease; }
     div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background-color: #F3E5F5 !important; border-radius: 12px !important; border: none !important; color: #B282E6 !important; }
     .log-card { border-left: 4px solid #C199E5; padding: 10px; margin-bottom: 5px; background: #fafafa; border-radius: 0 8px 8px 0; width: 100%; }
     .type-badge { background-color: #E1BEE7; color: #7B1FA2; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-right: 5px; }
     .owner-tag { color: #888; font-size: 0.8rem; margin-bottom: 4px; font-weight: bold; }
-    .complete-badge { background-color: #4CAF50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+    .complete-badge { background-color: #4CAF50; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
     .friend-box { background-color: #F9F3FF; padding: 10px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #E1BEE7; }
-    .work-count-badge { font-size: 0.9rem; color: #C199E5; margin-left: 8px; font-weight: normal; }
+    .work-count-badge { font-size: 0.9rem; color: #C199E5; margin-left: 8px; font-weight: bold; border: 1px solid #C199E5; padding: 2px 8px; border-radius: 15px; }
+    .deadline-countdown { color: #E91E63; font-weight: bold; margin-left: 8px; font-size: 0.85rem; }
+    div[data-testid="stSelectbox"] > div { margin-top: -5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -142,6 +150,20 @@ def calculate_total_percent(w):
         if wd["has_cover"]: scores.append(wd["cover_percent"])
     avg = sum(scores) / len(scores)
     return round(max(0.0, min(float(avg), 100.0)), 1)
+
+def get_deadline_info(deadline_str):
+    try:
+        deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
+        today = date.today()
+        diff = (deadline_date - today).days
+        if diff > 0:
+            return f'<span class="deadline-countdown">あと{diff}日</span>'
+        elif diff == 0:
+            return f'<span class="deadline-countdown">本日締切</span>'
+        else:
+            return f'<span class="deadline-countdown" style="color:gray;">締切超過({abs(diff)}日)</span>'
+    except:
+        return ""
 
 def get_labels_from_type(w_type, novel_unit="P"):
     if w_type == "イラスト": return "枚", ["構成", "ラフ/下書き", "線画", "塗り/仕上げ"]
@@ -234,37 +256,45 @@ if st.session_state.page == "list":
 
     st.divider()
 
-    # 自分の原稿データの取得と計算
-    c.execute("SELECT * FROM works WHERE user_id = ?", (st.session_state.user_id,))
-    my_works = c.fetchall()
-    
-    # 完了数のカウント
-    total_my_works = len(my_works)
-    completed_my_works = 0
-    for work in my_works:
-        if calculate_total_percent(work) >= 100.0:
-            completed_my_works += 1
-
-    # 見出し部分の修正
-    col_t, col_add = st.columns([7, 1.5])
-    with col_t:
-        st.markdown(f'### 自分の原稿 <span class="work-count-badge">({completed_my_works}/{total_my_works})</span>', unsafe_allow_html=True)
+    # --- 自分の原稿データの取得 ---
+    col_sort, col_f, col_add = st.columns([4, 4, 1.2])
+    with col_sort:
+        sort_option = st.selectbox("並び替え", ["締切が近い順", "締切が遠い順", "登録が新しい順", "登録が古い順"], key="sort_select", label_visibility="collapsed")
+    with col_f:
+        filter_option = st.selectbox("表示対象", ["すべて表示", "未完了のみ", "完了済のみ"], key="filter_select", label_visibility="collapsed")
     with col_add:
         if st.button("＋", type="primary", key="add_new_work_btn"): 
             st.session_state.edit_id = None
             st.session_state.page = "form"
             st.rerun()
 
-    for work in my_works:
+    sort_sql = "deadline ASC"
+    if sort_option == "締切が遠い順": sort_sql = "deadline DESC"
+    elif sort_option == "登録が新しい順": sort_sql = "id DESC"
+    elif sort_option == "登録が古い順": sort_sql = "id ASC"
+
+    c.execute(f"SELECT * FROM works WHERE user_id = ? ORDER BY {sort_sql}", (st.session_state.user_id,))
+    my_works_all = c.fetchall()
+    
+    my_total_count = len(my_works_all)
+    my_complete_count = sum(1 for w in my_works_all if calculate_total_percent(w) >= 100.0)
+
+    st.markdown(f'### 自分の原稿 <span class="work-count-badge">{my_complete_count}/{my_total_count}</span>', unsafe_allow_html=True)
+
+    for work in my_works_all:
         wd = get_work_dict(work); percent = calculate_total_percent(work)
+        is_complete = percent >= 100.0
+        if filter_option == "未完了のみ" and is_complete: continue
+        if filter_option == "完了済のみ" and not is_complete: continue
+
+        status_info = '<span class="complete-badge">✅ 完了済み</span>' if is_complete else get_deadline_info(wd["deadline"])
+
         st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
-        st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}{status_info}</div>', unsafe_allow_html=True)
         col_bar, col_ed, col_rd = st.columns([5.5, 1.5, 1.5])
         with col_bar:
-            if percent >= 100:
-                st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+            bar_class = "progress-bar-fill-complete" if is_complete else "progress-bar-fill"
+            st.markdown(f'<div class="progress-container"><div class="{bar_class}" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
         with col_ed:
             if st.button("編集", key=f"e_btn_{wd['id']}", use_container_width=True, type="secondary"): 
                 st.session_state.edit_id, st.session_state.page = wd['id'], "form"
@@ -276,31 +306,62 @@ if st.session_state.page == "list":
 
     st.divider()
     
-    # 友達の原稿
-    st.subheader(f"友達の原稿")
-    c.execute("""
+    # --- 友達の原稿データの取得 ---
+    c.execute(f"""
         SELECT w.*, u.username FROM works w 
         JOIN users u ON w.user_id = u.id 
-        WHERE w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ? AND is_visible = 1)
+        WHERE w.user_id IN (
+            SELECT friend_id FROM friends 
+            WHERE user_id = ? AND is_visible = 1 AND is_approved = 1
+        )
+        ORDER BY u.username, {sort_sql}
     """, (st.session_state.user_id,))
-    friend_works = c.fetchall()
+    friend_works_all = c.fetchall()
     
-    if friend_works:
-        for f_work in friend_works:
-            wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
-            st.markdown(f'<div class="owner-tag">👤 {wd["owner_name"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
-            st.markdown(f'<div style="font-size:18px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}</div>', unsafe_allow_html=True)
-            col_bar, col_rd = st.columns([7, 1.5])
-            with col_bar:
-                if percent >= 100:
-                    st.markdown('<div style="margin: 10px 0;"><span class="complete-badge">✅ 完了済み</span></div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div class="progress-container"><div class="progress-bar-fill" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
-            with col_rd:
-                if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
-                    st.session_state.view_id, st.session_state.page = wd['id'], "view"
-                    st.rerun()
+    f_total_count = len(friend_works_all)
+    f_complete_count = sum(1 for w in friend_works_all if calculate_total_percent(w) >= 100.0)
+
+    st.markdown(f'### 友達の原稿 <span class="work-count-badge">{f_complete_count}/{f_total_count}</span>', unsafe_allow_html=True)
+    
+    if friend_works_all:
+        works_by_friend = {}
+        for f_work in friend_works_all:
+            wd = get_work_dict(f_work)
+            owner = wd["owner_name"]
+            if owner not in works_by_friend:
+                works_by_friend[owner] = []
+            works_by_friend[owner].append(f_work)
+
+        for friend_name, works in works_by_friend.items():
+            friend_total = len(works)
+            friend_complete = sum(1 for w in works if calculate_total_percent(w) >= 100.0)
+            
+            valid_works = []
+            for w in works:
+                p = calculate_total_percent(w)
+                if filter_option == "未完了のみ" and p >= 100.0: continue
+                if filter_option == "完了済のみ" and p < 100.0: continue
+                valid_works.append(w)
+            
+            if not valid_works and filter_option != "すべて表示": continue
+
+            with st.expander(f"👤 {friend_name} ({friend_complete}/{friend_total})", expanded=True):
+                for f_work in valid_works:
+                    wd = get_work_dict(f_work); percent = calculate_total_percent(f_work)
+                    is_complete_f = percent >= 100.0
+                    status_info_f = '<span class="complete-badge">✅ 完了済み</span>' if is_complete_f else get_deadline_info(wd["deadline"])
+
+                    st.markdown(f'<div><span class="type-badge">{wd["work_type"]}</span><small style="color:#B282E6;">{wd["event_date"]} {wd["event_name"]}</small></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="font-size:16px; font-weight:bold; color:#B282E6; margin-bottom:5px;">{wd["deadline"]}〆 {wd["title"]}{status_info_f}</div>', unsafe_allow_html=True)
+                    col_bar, col_rd = st.columns([7.5, 2.5])
+                    with col_bar:
+                        bar_class_f = "progress-bar-fill-complete" if is_complete_f else "progress-bar-fill"
+                        st.markdown(f'<div class="progress-container"><div class="{bar_class_f}" style="width:{percent}%;"></div></div><div style="text-align:right; font-size:10px; color:#B282E6;">{percent}%</div>', unsafe_allow_html=True)
+                    with col_rd:
+                        if st.button("閲覧", key=f"v_f_btn_{wd['id']}", use_container_width=True, type="primary"): 
+                            st.session_state.view_id, st.session_state.page = wd['id'], "view"
+                            st.rerun()
+                    st.markdown('<div style="margin-bottom:15px;"></div>', unsafe_allow_html=True)
     else:
         st.info("表示可能な友達の原稿はありません。")
 
@@ -342,7 +403,7 @@ elif st.session_state.page == "daily":
 
         if st.button("保存", type="primary", key="daily_save"):
             note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cover=cov, ill=ill)
-            c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cov, ill))
+            c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cover, ill))
             conn.commit(); update_work_totals(wd['id']); st.session_state.page = "list"; st.rerun()
 
 elif st.session_state.page == "form":
@@ -395,7 +456,7 @@ elif st.session_state.page == "log_all":
                pl.p_diff, pl.n_diff, pl.l_diff, pl.t_diff, pl.cov_diff, pl.ill_diff, 
                w.id, w.work_type, w.novel_unit, w.has_cover, w.has_illustrations
         FROM progress_logs pl JOIN works w ON pl.work_id = w.id JOIN users u ON w.user_id = u.id 
-        WHERE w.user_id = ? OR w.user_id IN (SELECT friend_id FROM friends WHERE user_id = ? AND is_visible = 1) 
+        WHERE (w.user_id = ? OR w.user_id IN (SELECT user_id FROM friends WHERE friend_id = ? AND is_approved = 1 AND is_visible = 1)) 
         ORDER BY pl.id DESC
     """, (st.session_state.user_id, st.session_state.user_id))
     
@@ -403,34 +464,14 @@ elif st.session_state.page == "log_all":
         lid, ldate, lnote, wtitle, uname, uid, lp, ln, ll, lt, lcov, lill, wid, wtype, lunit, h_cov, h_ill = log
         is_mine = (uid == st.session_state.user_id)
         
-        if st.session_state.log_edit_id == lid:
-            with st.container():
-                st.markdown(f'<div style="color:#B282E6; font-size:1.2rem; font-weight:bold;">ログ編集: {wtitle} ({ldate})</div>', unsafe_allow_html=True)
-                unit, labels = get_labels_from_type(wtype, lunit)
-                ep = st.number_input(f"{labels[0]} (%)", value=lp, key=f"edit_p_{lid}")
-                en = st.number_input(f"{labels[1]} ({unit})", value=ln, key=f"edit_n_{lid}")
-                el = st.number_input(f"{labels[2]} ({unit})", value=ll, key=f"edit_l_{lid}")
-                et = st.number_input(f"{labels[3]} ({unit})", value=lt, key=f"edit_t_{lid}") if wtype != "小説" else 0
-                ec = st.number_input("表紙 (%)", value=lcov, key=f"edit_cov_{lid}") if h_cov else 0
-                ei = st.number_input("挿絵 (枚)", value=lill, key=f"edit_ill_{lid}") if (wtype == "小説" and h_ill) else 0
-                
-                c_s1, c_s2 = st.columns(2)
-                with c_s1:
-                    if st.button("更新保存", key=f"log_save_{lid}", type="primary"):
-                        nn = format_log_note(ep, en, el, et, wtype, unit, labels, ec, ei)
-                        c.execute("UPDATE progress_logs SET note=?, p_diff=?, n_diff=?, l_diff=?, t_diff=?, cov_diff=?, ill_diff=? WHERE id=?", (nn, ep, en, el, et, ec, ei, lid))
-                        conn.commit(); update_work_totals(wid); st.session_state.log_edit_id = None; st.rerun()
-                with c_s2:
-                    if st.button("取消", key=f"log_cancel_{lid}"): st.session_state.log_edit_id = None; st.rerun()
-        else:
-            col_txt, col_btn = st.columns([7.5, 2.5])
-            with col_txt: st.markdown(f'<div class="log-card"><small>{ldate} - {uname}<br>{wtitle}</small><br><b>{lnote}</b></div>', unsafe_allow_html=True)
-            with col_btn:
-                if is_mine:
-                    c1, c2 = st.columns(2)
-                    if c1.button("編集", key=f"log_ebtn_{lid}"): st.session_state.log_edit_id = lid; st.rerun()
-                    if c2.button("削除", key=f"log_dbtn_{lid}"):
-                        c.execute("DELETE FROM progress_logs WHERE id=?", (lid,)); conn.commit(); update_work_totals(wid); st.rerun()
+        col_txt, col_btn = st.columns([7.5, 2.5])
+        with col_txt: st.markdown(f'<div class="log-card"><small>{ldate} - {uname}<br>{wtitle}</small><br><b>{lnote}</b></div>', unsafe_allow_html=True)
+        with col_btn:
+            if is_mine:
+                c1, c2 = st.columns(2)
+                if c1.button("編集", key=f"log_ebtn_{lid}"): st.session_state.log_edit_id = lid; st.rerun()
+                if c2.button("削除", key=f"log_dbtn_{lid}"):
+                    c.execute("DELETE FROM progress_logs WHERE id=?", (lid,)); conn.commit(); update_work_totals(wid); st.rerun()
 
 elif st.session_state.page == "view":
     c.execute("SELECT works.*, users.username FROM works JOIN users ON works.user_id = users.id WHERE works.id=?", (st.session_state.view_id,))
@@ -467,33 +508,32 @@ elif st.session_state.page == "add_friend":
                     st.error("自分自身を追加することはできません。")
                 else:
                     try: 
-                        c.execute("INSERT INTO friends (user_id, friend_id, is_visible) VALUES (?,?,1)", (st.session_state.user_id, res[0]))
+                        c.execute("INSERT INTO friends (user_id, friend_id, is_visible, is_approved) VALUES (?,?,1,1)", (st.session_state.user_id, res[0]))
                         conn.commit(); st.success(f"{fn}さんを追加しました！"); st.rerun()
                     except: st.error("その友達は既に追加されています。")
             else: st.error("ユーザー名またはパスワードが違います。")
 
     st.divider()
-    st.subheader("登録済みの友達")
     
+    st.subheader("閲覧中のフレンド")
     c.execute("""
         SELECT f.id, u.username, f.is_visible 
         FROM friends f JOIN users u ON f.friend_id = u.id 
         WHERE f.user_id = ?
     """, (st.session_state.user_id,))
-    friends_list = c.fetchall()
+    following = c.fetchall()
     
-    if not friends_list:
-        st.info("まだ友達が登録されていません。")
+    if not following:
+        st.info("まだ登録している友達はいません。")
     else:
-        for fid, fname, fvis in friends_list:
+        for fid, fname, fvis in following:
             with st.container():
                 st.markdown(f'<div class="friend-box">', unsafe_allow_html=True)
                 col_n, col_v, col_d = st.columns([4, 3, 2])
-                with col_n:
-                    st.write(f"👤 **{fname}**")
+                with col_n: st.write(f"👤 **{fname}**")
                 with col_v:
                     v_label = "表示中" if fvis else "非表示"
-                    if st.toggle(v_label, value=bool(fvis), key=f"tog_{fid}"):
+                    if st.toggle(v_label, value=bool(fvis), key=f"tog_vis_{fid}"):
                         if not fvis:
                             c.execute("UPDATE friends SET is_visible=1 WHERE id=?", (fid,))
                             conn.commit(); st.rerun()
@@ -505,4 +545,34 @@ elif st.session_state.page == "add_friend":
                     if st.button("削除", key=f"del_f_{fid}", type="secondary"):
                         c.execute("DELETE FROM friends WHERE id=?", (fid,))
                         conn.commit(); st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    st.divider()
+
+    st.subheader("閲覧許可しているフレンド")
+    c.execute("""
+        SELECT f.id, u.username, f.is_approved 
+        FROM friends f JOIN users u ON f.user_id = u.id 
+        WHERE f.friend_id = ?
+    """, (st.session_state.user_id,))
+    followers = c.fetchall()
+    
+    if not followers:
+        st.info("あなたを登録している友達はいません。")
+    else:
+        for fid, fname, fapp in followers:
+            with st.container():
+                st.markdown(f'<div class="friend-box">', unsafe_allow_html=True)
+                col_n, col_v = st.columns([6, 3])
+                with col_n: st.write(f"👤 **{fname}** に登録されています")
+                with col_v:
+                    app_label = "公開中" if fapp else "非公開"
+                    if st.toggle(app_label, value=bool(fapp), key=f"tog_app_{fid}"):
+                        if not fapp:
+                            c.execute("UPDATE friends SET is_approved=1 WHERE id=?", (fid,))
+                            conn.commit(); st.rerun()
+                    else:
+                        if fapp:
+                            c.execute("UPDATE friends SET is_approved=0 WHERE id=?", (fid,))
+                            conn.commit(); st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
