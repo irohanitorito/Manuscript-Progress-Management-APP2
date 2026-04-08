@@ -403,7 +403,8 @@ elif st.session_state.page == "daily":
 
         if st.button("保存", type="primary", key="daily_save"):
             note = format_log_note(p, n, l, t, wd['work_type'], unit, labels, cover=cov, ill=ill)
-            c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cover, ill))
+            # 修正箇所: 変数名を cov に統一
+            c.execute("INSERT INTO progress_logs (work_id, update_date, note, p_diff, n_diff, l_diff, t_diff, cov_diff, ill_diff) VALUES (?,?,?,?,?,?,?,?,?)", (wd['id'], datetime.now().strftime("%Y/%m/%d %H:%M"), note, p, n, l, t, cov, ill))
             conn.commit(); update_work_totals(wd['id']); st.session_state.page = "list"; st.rerun()
 
 elif st.session_state.page == "form":
@@ -549,7 +550,7 @@ elif st.session_state.page == "add_friend":
 
     st.divider()
 
-    st.subheader("閲覧許可しているフレンド")
+    st.subheader("見ているフレンド")
     c.execute("""
         SELECT f.id, u.username, f.is_approved 
         FROM friends f JOIN users u ON f.user_id = u.id 
